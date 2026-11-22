@@ -388,35 +388,6 @@ pub const Sheet = struct {
     }
 };
 
-pub fn attribute(tag: []const u8, wanted: []const u8) ?[]const u8 {
-    var i: usize = 0;
-    while (i < tag.len and !isSpace(tag[i]) and tag[i] != '/') : (i += 1) {}
-    while (i < tag.len) {
-        while (i < tag.len and (isSpace(tag[i]) or tag[i] == '/')) : (i += 1) {}
-        const start = i;
-        while (i < tag.len and tag[i] != '=' and !isSpace(tag[i]) and tag[i] != '/') : (i += 1) {}
-        if (start == i) break;
-        const name = tag[start..i];
-        while (i < tag.len and isSpace(tag[i])) : (i += 1) {}
-        if (i >= tag.len or tag[i] != '=') continue;
-        i += 1;
-        while (i < tag.len and isSpace(tag[i])) : (i += 1) {}
-        if (i >= tag.len) return null;
-        const quote: u8 = if (tag[i] == '"' or tag[i] == '\'') tag[i] else 0;
-        if (quote != 0) i += 1;
-        const value_start = i;
-        if (quote != 0) {
-            while (i < tag.len and tag[i] != quote) : (i += 1) {}
-        } else {
-            while (i < tag.len and !isSpace(tag[i]) and tag[i] != '/') : (i += 1) {}
-        }
-        const value = tag[value_start..i];
-        if (quote != 0 and i < tag.len) i += 1;
-        if (std.ascii.eqlIgnoreCase(name, wanted)) return value;
-    }
-    return null;
-}
-
 pub fn parseDeclarations(input: []const u8, viewport_height: u16) Patch {
     var result = Patch{};
     var cursor: usize = 0;

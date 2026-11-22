@@ -1,8 +1,0 @@
-<map id="indicconjunctbreakdef.h" name="indicconjunctbreakdef.h">
-<area shape="rect" id="Node000001" title=" " alt="" coords="5,5,164,31"/>
-<area shape="rect" id="Node000002" href="$graphemebreak_8c.html" title="Implementation of the grapheme breaking algorithm as described in Unicode Standard Annex 29." alt="" coords="24,153,145,178"/>
-<area shape="poly" id="edge1_Node000001_Node000002" title=" " alt="" coords="65,46,52,80,51,99,57,119,77,152,72,153,52,121,46,100,47,78,67,41"/>
-<area shape="rect" id="Node000003" href="$indicconjunctbreakdata_8c.html" title=" " alt="" coords="62,79,227,105"/>
-<area shape="poly" id="edge2_Node000001_Node000003" title=" " alt="" coords="105,40,137,78,132,79,103,45"/>
-<area shape="poly" id="edge3_Node000003_Node000002" title=" " alt="" coords="127,115,96,154,93,150,122,117"/>
-</map>

@@ -10,4 +10,3 @@
 
 # Nested repository metadata and transient Zig dependency downloads.
 **/.git/
-third_party/arix/zig-pkg/.tmp-*/

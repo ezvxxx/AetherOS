@@ -37,41 +37,17 @@ foreach ($source in Get-ChildItem $H264Native -Filter "*.c" | Sort-Object Name) 
     $H264Objects += $object
 }
 
-# Generate Arix's HTML entity, local-name, and encoding tables without running
-# its desktop build (which also resolves host font libraries).
-$ArixRoot = Join-Path $Root "third_party\arix"
-$ArixGenerated = Join-Path $Build "arix_generated"
-New-Item -ItemType Directory -Force -Path $ArixGenerated | Out-Null
-Push-Location $ArixRoot
-try {
-    & $Zig run src\gen\local_name.zig -- res\json\local_names.json (Join-Path $ArixGenerated "local_name.zig")
-    if ($LASTEXITCODE -ne 0) { throw "Could not generate Arix local-name tables." }
-    & $Zig run src\gen\named_ref.zig -- res\json\named_char_refs.json (Join-Path $ArixGenerated "named_ref.zig")
-    if ($LASTEXITCODE -ne 0) { throw "Could not generate Arix HTML entity tables." }
-} finally {
-    Pop-Location
-}
-$Strale = Get-ChildItem (Join-Path $ArixRoot "zig-pkg") -Directory | Where-Object Name -Like "strale-*" | Select-Object -First 1
-if (-not $Strale) { throw "Arix Strale dependency is missing from third_party\arix\zig-pkg." }
-
 & $Zig build-exe $InterruptObject $Mp3Object $H264Objects `
     -target x86_64-freestanding-none -mcmodel=kernel -mno-red-zone `
     -O ReleaseFast -fstrip -fentry=_start `
     ("-T" + (Join-Path $Root "linker.ld")) `
     ("-femit-bin=" + (Join-Path $Build "kernel.elf")) `
-    --dep z2dimg --dep z2d --dep vp8 --dep arix_renderer ("-Mroot=" + (Join-Path $Root "kernel.zig")) `
+    --dep z2dimg --dep z2d --dep vp8 ("-Mroot=" + (Join-Path $Root "kernel.zig")) `
     --dep z2d --dep riff --dep vp8 ("-Mz2dimg=" + (Join-Path $Root "third_party\z2dimg\root.zig")) `
     --dep z2d_options ("-Mz2d=" + (Join-Path $Root "third_party\z2d\src\z2d.zig")) `
     ("-Mz2d_options=" + (Join-Path $Root "third_party\z2d_options.zig")) `
     ("-Mriff=" + (Join-Path $Root "third_party\riff\root.zig")) `
-    ("-Mvp8=" + (Join-Path $Root "third_party\vp8\root.zig")) `
-    --dep arix_core --dep strale --dep aether_font ("-Marix_renderer=" + (Join-Path $Root "ui\arix_renderer.zig")) `
-    --dep strale --dep named_ref --dep local_name --dep config --dep aether_font ("-Marix_core=" + (Join-Path $ArixRoot "src\aether_renderer.zig")) `
-    ("-Mstrale=" + (Join-Path $Strale.FullName "src\strale.zig")) `
-    ("-Mnamed_ref=" + (Join-Path $ArixGenerated "named_ref.zig")) `
-    --dep strale ("-Mlocal_name=" + (Join-Path $ArixGenerated "local_name.zig")) `
-    ("-Mconfig=" + (Join-Path $ArixRoot "aether_config.zig")) `
-    --dep z2d ("-Maether_font=" + (Join-Path $Root "arix_font.zig"))
+    ("-Mvp8=" + (Join-Path $Root "third_party\vp8\root.zig"))
 if ($LASTEXITCODE -ne 0) { throw "Zig kernel build failed with exit code $LASTEXITCODE" }
 & (Join-Path $Root "boot\compact-kernel.ps1") -Path (Join-Path $Build "kernel.elf")
 if ($LASTEXITCODE -ne 0) { throw "Could not compact the kernel's zero-filled BSS segment." }
