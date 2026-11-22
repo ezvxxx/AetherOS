@@ -103,6 +103,9 @@ $(ISO): $(ESP) $(EFI_LOADER) | $(BUILD)
 	rm -rf $(BUILD)/iso_root
 	mkdir -p $(BUILD)/iso_root/boot $(BUILD)/iso_root/EFI/BOOT
 	cp $(ESP) $(BUILD)/iso_root/boot/esp.img
+	# ISO-mode USB writers copy the ISO filesystem instead of exposing the
+	# nested El Torito ESP. Keep the kernel beside the loader's ISO fallback path.
+	cp $(KERNEL) $(BUILD)/iso_root/boot/kernel.elf
 	cp $(EFI_LOADER) $(BUILD)/iso_root/EFI/BOOT/BOOTX64.EFI
 	$(XORRISO) -as mkisofs -R -r -J -iso-level 3 -eltorito-alt-boot \
 		-e boot/esp.img -no-emul-boot -isohybrid-gpt-basdat $(BUILD)/iso_root -o $@
