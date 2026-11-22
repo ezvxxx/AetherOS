@@ -27,9 +27,8 @@ const menu_apps = [_]s.App{ .terminal, .files, .settings, .editor, .system, .bro
 const Shortcut = struct { app: s.App, x: u64, y: u64, name: [32]u8 = @splat(0), name_len: u8 = 0 };
 const shortcut_capacity = 12;
 const DesktopMenu = enum { none, background, shortcut, desktop_file, explorer_entry, explorer_background, app_picker };
-const TopMenu = enum { none, finder, file, edit, view, go, window, help };
+const TopMenu = enum { none, file, edit, view, go, window, help };
 var top_menu: TopMenu = .none;
-const finder_menu_items = [_][]const u8{ "About AetherOS", "Open Files", "Settings" };
 const file_menu_items = [_][]const u8{ "New Window", "New Folder", "Close Window" };
 const edit_menu_items = [_][]const u8{ "Cut", "Copy", "Paste" };
 const view_menu_items = [_][]const u8{ "Refresh", "Light Theme", "Dark Theme", "Show Desktop" };
@@ -573,7 +572,6 @@ fn navigateToPath(path: []const u8) void {
 
 fn topMenuItems(menu: TopMenu) []const []const u8 {
     return switch (menu) {
-        .finder => &finder_menu_items,
         .file => &file_menu_items,
         .edit => &edit_menu_items,
         .view => &view_menu_items,
@@ -586,24 +584,19 @@ fn topMenuItems(menu: TopMenu) []const []const u8 {
 
 fn topMenuX(menu: TopMenu) u64 {
     return switch (menu) {
-        .finder => 12,
-        .file => 76,
-        .edit => 118,
-        .view => 160,
-        .go => 202,
-        .window => 232,
-        .help => 286,
+        .file => 12,
+        .edit => 54,
+        .view => 96,
+        .go => 138,
+        .window => 168,
+        .help => 222,
         .none => 0,
     };
 }
 
 fn handleTopBarClick(x: u64) void {
-    if (x < 70) {
-        top_menu = if (top_menu == .finder) .none else .finder;
-        return;
-    }
     const labels = [_]TopMenu{ .file, .edit, .view, .go, .window, .help };
-    const starts = [_]u64{ 76, 118, 160, 202, 232, 286 };
+    const starts = [_]u64{ 12, 54, 96, 138, 168, 222 };
     const widths = [_]u64{ 30, 30, 30, 24, 48, 30 };
     for (labels, starts, widths) |menu, start, width| {
         if (x >= start and x < start + width) {
@@ -616,9 +609,7 @@ fn handleTopBarClick(x: u64) void {
 
 fn activateTopMenuItem(menu: TopMenu, row: usize) void {
     switch (menu) {
-        .finder, .help => {
-            if (menu == .finder and row == 1) launchApp(.files) else if (menu == .finder and row == 2) launchApp(.settings) else notifications.show("AetherOS 64-bit desktop");
-        },
+        .help => notifications.show("AetherOS 64-bit desktop"),
         .file => switch (row) {
             0 => launchApp(.files),
             1 => createFolderIn(s.fs_current_directory),
@@ -2048,11 +2039,9 @@ pub fn drawTopBar() void {
     const muted = if (s.dark_theme) canvas.color(190, 190, 192) else canvas.color(88, 88, 88);
     canvas.fillRect(0, 0, s.fb.width, 28, panel);
     canvas.fillRect(0, 27, s.fb.width, 1, edge);
-    if (top_menu == .finder) canvas.fillRoundedRect(10, 2, 54, 24, 4, if (s.dark_theme) canvas.color(58, 58, 60) else canvas.color(224, 224, 224));
-    font.drawText(14, 10, "Finder", 1, ink);
     const menu_labels = [_][]const u8{ "File", "Edit", "View", "Go", "Window", "Help" };
     const menu_kinds = [_]TopMenu{ .file, .edit, .view, .go, .window, .help };
-    var x: u64 = 78;
+    var x: u64 = 14;
     for (menu_labels, menu_kinds) |label, kind| {
         if (top_menu == kind) canvas.fillRoundedRect(x -| 4, 2, @as(u64, @intCast(label.len)) * 6 + 8, 24, 4, if (s.dark_theme) canvas.color(58, 58, 60) else canvas.color(224, 224, 224));
         font.drawText(x, 10, label, 1, muted);
