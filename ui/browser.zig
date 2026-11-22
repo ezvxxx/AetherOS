@@ -725,7 +725,7 @@ fn loadOnce(url: *Url) bool {
         web_engine.renderPlain(body_buffer[0..body_len], columns);
     } else {
         const height = if (isActive()) s.windows[@intCast(s.active_window)].h else s.fb.height;
-        web_engine.renderHtml(body_buffer[0..body_len], columns, @intCast(@min(height -| 126, 65535)), .{
+        web_engine.renderHtml(body_buffer[0..body_len], columns, @intCast(@min(height -| 126, 65535)), s.dark_theme, .{
             .resolve = resolvePageLink,
             .stylesheet = fetchPageStylesheet,
             .image = fetchPageImage,
@@ -1159,7 +1159,6 @@ pub fn draw(win: s.Window) void {
     const fg = if (s.dark_theme) canvas.color(235, 235, 235) else canvas.color(32, 32, 32);
     const muted = if (s.dark_theme) canvas.color(155, 155, 155) else canvas.color(105, 105, 105);
     const accent = if (s.dark_theme) canvas.color(205, 205, 205) else canvas.color(55, 55, 55);
-    const blue = canvas.color(127, 188, 255);
     const chrome = if (s.dark_theme) canvas.color(34, 34, 36) else canvas.color(238, 238, 238);
     const selected_chrome = if (s.dark_theme) canvas.color(63, 63, 65) else canvas.color(218, 218, 218);
     const address_bg = if (s.dark_theme) canvas.color(18, 18, 20) else canvas.color(255, 255, 255);
@@ -1239,5 +1238,5 @@ pub fn draw(win: s.Window) void {
         font.drawText(content_x, content_y + 70, "Enter an address or search query above.", 1, muted);
         return;
     }
-    web_engine.draw(content_x, content_y, content_pixels, content_height, fg, blue);
+    web_engine.draw(content_x, content_y, content_pixels, content_height, s.dark_theme);
 }

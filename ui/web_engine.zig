@@ -32,13 +32,14 @@ var page_colors: [max_page]u24 = @splat(0);
 var page_backgrounds: [max_page]u24 = @splat(0);
 var page_style_flags: [max_page]u8 = @splat(0);
 var page_decorations: [max_page]u8 = @splat(0);
-var page_letter_spacing: [max_page]i8 = @splat(0);
-var page_word_spacing: [max_page]u8 = @splat(0);
+var page_advances: [max_page]u16 = undefined;
+var line_width: usize = 0;
 var page_line_heights: [max_page]u8 = @splat(10);
 var page_font_scales: [max_page]u8 = @splat(1);
 var page_align_starts: [max_page]u16 = @splat(0);
 var page_align_widths: [max_page]u16 = @splat(0);
 var page_background_color: ?u24 = null;
+var document_dark: ?bool = null;
 var page_len: usize = 0;
 var page_lines: usize = 0;
 var page_scroll: usize = 0;
@@ -51,9 +52,6 @@ var active_link: u8 = 0;
 var page_link_ids: [max_page]u8 = undefined;
 var rendering_style: css.Computed = .{};
 var flow_style: css.Computed = .{};
-var flow_indent: usize = 0;
-var flow_right_inset: usize = 0;
-var flow_font_scale: usize = 1;
 var flow_align_start: usize = 0;
 var flow_align_width: usize = 0;
 var inline_images: [max_inline_images]?media.Picture = @splat(null);
@@ -84,11 +82,13 @@ pub fn clear() void {
     clearInlineImages();
     page_len = 0;
     page_lines = 0;
+    line_width = 0;
     page_scroll = 0;
     link_count = 0;
     active_link = 0;
     block_box_count = 0;
     page_background_color = null;
+    document_dark = null;
     page_title_len = 0;
 }
 
@@ -114,35 +114,35 @@ fn appendPage(ch: u8) void {
         (if (rendering_style.white_space_nowrap) @as(u8, 64) else 0) |
         (if (rendering_style.italic) @as(u8, 128) else 0);
     page_decorations[page_len] = (if (rendering_style.line_through) @as(u8, 1) else 0) | (if (rendering_style.overline) @as(u8, 2) else 0);
-    page_letter_spacing[page_len] = rendering_style.letter_spacing;
-    page_word_spacing[page_len] = rendering_style.word_spacing;
+    const advance = if (ch == '\n' or ch == 0xff) 0 else glyphAdvance(ch, rendering_style);
+    page_advances[page_len] = advance;
+    line_width += advance;
     page_len += 1;
-    if (ch == '\n') page_lines += 1;
+    if (ch == '\n') {
+        page_lines += 1;
+        line_width = 0;
+    }
 }
 
 fn newline() void {
     if (page_len != 0 and page[page_len - 1] != '\n') appendPage('\n');
 }
 
-fn appendVisible(ch: u8, columns: usize, previous_space: *bool) void {
-    if (ch == '\r' or ch == '\n' or ch == '\t' or ch == ' ') {
-        if (page_len != 0 and page[page_len - 1] != '\n' and !previous_space.*) appendPage(' ');
+fn fontSize(scale: u8) u8 {
+    return if (scale <= 1) 10 else @as(u8, @min(scale, 4)) * 8;
+}
+
+fn glyphAdvance(ch: u8, style: css.Computed) u16 {
+    const measured: i32 = @intCast(font.textWidthSized(&.{ch}, @max(1, style.font_scale), fontSize(style.font_scale)));
+    const spacing = @as(i32, style.letter_spacing) + if (ch == ' ') @as(i32, style.word_spacing) else 0;
+    return @intCast(@max(1, measured + spacing));
+}
+
+fn appendVisible(ch: u8, previous_space: *bool) void {
+    if (std.ascii.isWhitespace(ch)) {
+        if (line_width != 0 and !previous_space.*) appendPage(' ');
         previous_space.* = true;
         return;
-    }
-    const effective_columns = @max(1, columns / @max(1, flow_font_scale));
-    if (!flow_style.white_space_nowrap and page_len != 0 and page[page_len - 1] != '\n') {
-        var line_start = page_len;
-        while (line_start > 0 and page[line_start - 1] != '\n') : (line_start -= 1) {}
-        const line_length = page_len - line_start;
-        const indent = @min(flow_indent, effective_columns -| 1);
-        const content_length = line_length -| indent;
-        const content_columns = effective_columns -| indent -| @min(flow_right_inset, effective_columns -| indent -| 1);
-        if (content_length >= @max(1, content_columns)) newline();
-    }
-    const indent = @min(flow_indent, effective_columns -| 1);
-    if (page_len == 0 or page[page_len - 1] == '\n') {
-        for (0..indent) |_| appendPage(' ');
     }
     var displayed = ch;
     if (ch < 0x80) switch (flow_style.text_transform) {
@@ -153,7 +153,9 @@ fn appendVisible(ch: u8, columns: usize, previous_space: *bool) void {
         },
         .none => {},
     };
-    appendPage(if (displayed < 0x80) displayed else '?');
+    const glyph = if (displayed < 0x80) displayed else '?';
+    if (!flow_style.white_space_nowrap and line_width != 0 and line_width + glyphAdvance(glyph, rendering_style) > flow_align_width) newline();
+    appendPage(glyph);
     previous_space.* = false;
 }
 
@@ -198,53 +200,53 @@ fn htmlNumberMilli(tag: []const u8, attribute_name: []const u8) ?u64 {
     return @min(1_000_000_000, value * 1000 + fraction);
 }
 
-fn renderMeterTag(tag: []const u8, columns: usize, previous_space: *bool) void {
+fn renderMeterTag(tag: []const u8, previous_space: *bool) void {
     const max_value = htmlNumberMilli(tag, "max") orelse 100_000;
     const value = htmlNumberMilli(tag, "value") orelse 0;
     const percent: usize = if (max_value == 0) 0 else @intCast(@min(100, value * 100 / max_value));
-    appendVisible('[', columns, previous_space);
-    for (0..10) |segment| appendVisible(if (segment < (percent + 5) / 10) '#' else '-', columns, previous_space);
-    appendVisible(']', columns, previous_space);
+    appendVisible('[', previous_space);
+    for (0..10) |segment| appendVisible(if (segment < (percent + 5) / 10) '#' else '-', previous_space);
+    appendVisible(']', previous_space);
 }
 
-fn renderInput(tag: []const u8, columns: usize, previous_space: *bool) void {
+fn renderInput(tag: []const u8, previous_space: *bool) void {
     const kind = html.attribute(tag, "type") orelse "text";
     if (equalIgnoreCase(kind, "hidden")) return;
     if (equalIgnoreCase(kind, "checkbox")) {
-        appendVisible('[', columns, previous_space);
-        appendVisible(if (hasHtmlAttribute(tag, "checked")) 'x' else ' ', columns, previous_space);
-        appendVisible(']', columns, previous_space);
+        appendVisible('[', previous_space);
+        appendVisible(if (hasHtmlAttribute(tag, "checked")) 'x' else ' ', previous_space);
+        appendVisible(']', previous_space);
         return;
     }
     if (equalIgnoreCase(kind, "radio")) {
-        appendVisible('(', columns, previous_space);
-        appendVisible(if (hasHtmlAttribute(tag, "checked")) '*' else ' ', columns, previous_space);
-        appendVisible(')', columns, previous_space);
+        appendVisible('(', previous_space);
+        appendVisible(if (hasHtmlAttribute(tag, "checked")) '*' else ' ', previous_space);
+        appendVisible(')', previous_space);
         return;
     }
     if (equalIgnoreCase(kind, "submit") or equalIgnoreCase(kind, "reset") or equalIgnoreCase(kind, "button")) {
         const label = html.attribute(tag, "value") orelse if (equalIgnoreCase(kind, "submit")) "Submit" else if (equalIgnoreCase(kind, "reset")) "Reset" else "Button";
-        appendVisible('[', columns, previous_space);
-        for (label[0..@min(label.len, 40)]) |ch| appendVisible(ch, columns, previous_space);
-        appendVisible(']', columns, previous_space);
+        appendVisible('[', previous_space);
+        for (label[0..@min(label.len, 40)]) |ch| appendVisible(ch, previous_space);
+        appendVisible(']', previous_space);
         return;
     }
     if (equalIgnoreCase(kind, "file")) {
-        for ("[Choose file]") |ch| appendVisible(ch, columns, previous_space);
+        for ("[Choose file]") |ch| appendVisible(ch, previous_space);
         return;
     }
     var size: usize = 12;
     if (html.attribute(tag, "size")) |raw_size| size = @max(1, @min(32, std.fmt.parseInt(usize, raw_size, 10) catch 12));
-    appendVisible('[', columns, previous_space);
+    appendVisible('[', previous_space);
     const value = html.attribute(tag, "value") orelse html.attribute(tag, "placeholder") orelse "";
     const visible_len = @min(size, 40);
     if (equalIgnoreCase(kind, "password")) {
-        for (0..@min(value.len, visible_len)) |_| appendVisible('*', columns, previous_space);
+        for (0..@min(value.len, visible_len)) |_| appendVisible('*', previous_space);
     } else {
-        for (value[0..@min(value.len, visible_len)]) |ch| appendVisible(ch, columns, previous_space);
+        for (value[0..@min(value.len, visible_len)]) |ch| appendVisible(ch, previous_space);
     }
-    if (value.len < visible_len) for (0..visible_len - value.len) |_| appendVisible('_', columns, previous_space);
-    appendVisible(']', columns, previous_space);
+    if (value.len < visible_len) for (0..visible_len - value.len) |_| appendVisible('_', previous_space);
+    appendVisible(']', previous_space);
 }
 
 fn imageSource(tag: []const u8) ?[]const u8 {
@@ -283,11 +285,8 @@ pub fn renderPlain(input: []const u8, columns: usize) void {
     clear();
     rendering_style = .{};
     flow_style = .{};
-    flow_indent = 0;
-    flow_right_inset = 0;
-    flow_font_scale = 1;
     flow_align_start = 0;
-    flow_align_width = columns;
+    flow_align_width = columns * 6;
     page_lines = 1;
     var previous_space = true;
     for (input) |ch| {
@@ -295,7 +294,7 @@ pub fn renderPlain(input: []const u8, columns: usize) void {
             newline();
             previous_space = true;
         } else if (ch != '\r') {
-            appendVisible(ch, columns, &previous_space);
+            appendVisible(ch, &previous_space);
         }
         if (page_len + 1 >= page.len) break;
     }
@@ -326,30 +325,49 @@ fn isBlock(name: []const u8, style: css.Computed) bool {
     return style.block orelse isBlockElement(name);
 }
 
-fn verticalGap(pixel_value: u16) void {
-    const rows = @min(128, (@as(usize, pixel_value) + 9) / 10);
-    if (rows == 0) return;
+fn verticalGap(pixels: u16) void {
+    if (pixels == 0) return;
     newline();
-    for (0..rows) |_| appendPage('\n');
+    var remaining = pixels;
+    while (remaining != 0 and page_len < page.len) {
+        const gap: u8 = @intCast(@min(remaining, 255));
+        appendPage('\n');
+        page_line_heights[page_len - 1] = gap;
+        remaining -= gap;
+    }
 }
 
-fn updateFlow(style: css.Computed, columns: usize) void {
+const FlowBox = struct {
+    left: usize = 0,
+    width: usize = 0,
+};
+
+var content_box: FlowBox = .{};
+
+fn updateFlow(style: css.Computed, parent: FlowBox, columns: usize) void {
+    const available = parent.width -| style.margin.left -| style.margin.right;
+    const padding = @as(usize, style.padding.left) + style.padding.right;
+    const space = available -| padding;
+    const preferred = if (style.width_percent) |percent|
+        parent.width * percent / 100
+    else
+        style.width orelse space;
+    const limited = if (style.max_width) |limit| @min(preferred, limit) else preferred;
+    const width = @min(space, @max(style.min_width, limited));
+    const auto_margin = if (style.margin_auto) (space -| width) / 2 else 0;
+    content_box = .{
+        .left = parent.left + style.margin.left + auto_margin + style.padding.left,
+        .width = width,
+    };
+    updateTextFlow(style, columns);
+}
+
+fn updateTextFlow(style: css.Computed, columns: usize) void {
     flow_style = style;
-    flow_font_scale = @max(1, style.font_scale);
-    const cell_width = 6 * flow_font_scale;
-    const available = @max(1, columns / flow_font_scale);
-    const left = (@as(usize, style.margin.left) + style.padding.left + cell_width - 1) / cell_width;
-    const right = (@as(usize, style.margin.right) + style.padding.right + cell_width - 1) / cell_width;
-    const max_content = if (style.max_width) |width| @max(1, @as(usize, width) / cell_width) else available;
-    const min_content = @as(usize, style.min_width) / cell_width;
-    const set_width = @min(available, @max(min_content, if (style.width_percent) |percent| @max(1, available * percent / 100) else if (style.width) |width| @max(1, @as(usize, width) / cell_width) else max_content));
-    const total = @min(available, set_width + left + right);
-    const centered = if (style.margin_auto and style.max_width != null and total < available) (available - total) / 2 else 0;
-    const text_indent = (@as(usize, style.text_indent) + cell_width - 1) / cell_width;
-    flow_indent = @min(available -| 1, centered + left + text_indent);
-    flow_right_inset = @max(centered + right, available -| centered -| left -| set_width);
-    flow_align_start = flow_indent;
-    flow_align_width = @max(1, @min(set_width, available -| left -| right));
+    const viewport = @max(1, columns * 6);
+    flow_align_start = @min(viewport - 1, content_box.left + style.text_indent);
+    const end = @min(viewport, content_box.left + content_box.width);
+    flow_align_width = @max(1, end -| flow_align_start);
 }
 
 fn isVoidElement(name: []const u8) bool {
@@ -360,27 +378,22 @@ fn isVoidElement(name: []const u8) bool {
         equalIgnoreCase(name, "track") or equalIgnoreCase(name, "wbr");
 }
 
-pub fn renderHtml(input: []const u8, columns: usize, viewport_height: u16, resources: Resources) void {
+pub fn renderHtml(input: []const u8, columns: usize, viewport_height: u16, dark: bool, resources: Resources) void {
     clear();
     rendering_style = .{};
     flow_style = .{};
-    flow_indent = 0;
-    flow_right_inset = 0;
-    flow_font_scale = 1;
     flow_align_start = 0;
-    flow_align_width = columns;
+    flow_align_width = columns * 6;
     page_lines = 1;
-    var stylesheet = css.Sheet{};
+    content_box = .{ .width = columns * 6 };
+    document_dark = dark;
+    var stylesheet: css.Sheet = .{ .dark = dark };
     collectMetadata(input, &stylesheet, viewport_height, resources);
     const StyleFrame = struct {
         name: []const u8 = "",
         parent_link: u8 = 0,
+        parent_box: FlowBox = .{},
         parent: css.Computed = .{},
-        parent_indent: usize = 0,
-        parent_right_inset: usize = 0,
-        parent_font_scale: usize = 1,
-        parent_align_start: usize = 0,
-        parent_align_width: usize = 0,
         box_index: ?usize = null,
     };
     var style_stack: [32]StyleFrame = @splat(.{});
@@ -413,9 +426,9 @@ pub fn renderHtml(input: []const u8, columns: usize, viewport_height: u16, resou
             }
             if (!closing and equalIgnoreCase(name, "textarea")) {
                 const content = tokens.rawText(name);
-                appendVisible('[', columns, &previous_space);
-                appendText(content, columns, &previous_space, false);
-                appendVisible(']', columns, &previous_space);
+                appendVisible('[', &previous_space);
+                appendText(content, &previous_space, false);
+                appendVisible(']', &previous_space);
                 continue;
             }
             if (!closing and !void_element and style_stack_len == style_stack.len) {
@@ -427,9 +440,9 @@ pub fn renderHtml(input: []const u8, columns: usize, viewport_height: u16, resou
                 while (match > 0 and !equalIgnoreCase(style_stack[match - 1].name, name)) match -= 1;
                 if (match == 0) continue;
                 const closing_style = active_style;
-                if (equalIgnoreCase(name, "q")) appendVisible('"', columns, &previous_space);
-                if (equalIgnoreCase(name, "rt")) appendVisible(')', columns, &previous_space);
-                if (equalIgnoreCase(name, "button") or equalIgnoreCase(name, "select") or equalIgnoreCase(name, "textarea")) appendVisible(']', columns, &previous_space);
+                if (equalIgnoreCase(name, "q")) appendVisible('"', &previous_space);
+                if (equalIgnoreCase(name, "rt")) appendVisible(')', &previous_space);
+                if (equalIgnoreCase(name, "button") or equalIgnoreCase(name, "select") or equalIgnoreCase(name, "textarea")) appendVisible(']', &previous_space);
                 if (equalIgnoreCase(name, "pre")) preformatted = false;
                 if (isBlock(name, closing_style)) {
                     rendering_style = closing_style;
@@ -441,17 +454,13 @@ pub fn renderHtml(input: []const u8, columns: usize, viewport_height: u16, resou
                 while (frame_index >= match) {
                     frame_index -= 1;
                     active_style = style_stack[frame_index].parent;
-                    flow_indent = style_stack[frame_index].parent_indent;
-                    flow_right_inset = style_stack[frame_index].parent_right_inset;
-                    flow_font_scale = style_stack[frame_index].parent_font_scale;
-                    flow_align_start = style_stack[frame_index].parent_align_start;
-                    flow_align_width = style_stack[frame_index].parent_align_width;
+                    content_box = style_stack[frame_index].parent_box;
                     style_stack_len = frame_index;
                     if (style_stack[frame_index].box_index) |index| block_boxes[index].end_line = page_lines;
                     active_link = style_stack[frame_index].parent_link;
                 }
                 rendering_style = active_style;
-                flow_style = active_style;
+                updateTextFlow(active_style, columns);
                 if (isBlockElement(name)) newline();
                 if (isBlock(name, closing_style)) previous_space = true;
                 continue;
@@ -475,7 +484,7 @@ pub fn renderHtml(input: []const u8, columns: usize, viewport_height: u16, resou
             }
             if (equalIgnoreCase(name, "iframe") or equalIgnoreCase(name, "video") or equalIgnoreCase(name, "audio")) {
                 const fallback = if (equalIgnoreCase(name, "iframe")) "[Embedded frame]" else if (equalIgnoreCase(name, "video")) "[Video player]" else "[Audio player]";
-                for (fallback) |ch| appendVisible(ch, columns, &previous_space);
+                for (fallback) |ch| appendVisible(ch, &previous_space);
                 if (!void_element) {
                     if (equalIgnoreCase(name, "iframe")) {
                         _ = tokens.rawText(name);
@@ -484,13 +493,13 @@ pub fn renderHtml(input: []const u8, columns: usize, viewport_height: u16, resou
                 continue;
             }
             if (equalIgnoreCase(name, "progress") or equalIgnoreCase(name, "meter")) {
-                renderMeterTag(tag, columns, &previous_space);
+                renderMeterTag(tag, &previous_space);
                 if (!void_element) tokens.skipElement(name);
                 continue;
             }
             const block_layout = isBlock(name, element_style);
             if (equalIgnoreCase(name, "html")) page_background_color = element_style.background;
-            if (equalIgnoreCase(name, "body")) page_background_color = element_style.background orelse page_background_color;
+            if (equalIgnoreCase(name, "body") and page_background_color == null) page_background_color = element_style.background;
             if (block_layout) element_style.container_background = element_style.background orelse parent_style.container_background;
             if (equalIgnoreCase(name, "body")) element_style.container_background = element_style.background;
             if (equalIgnoreCase(name, "b") or equalIgnoreCase(name, "strong") or (name.len == 2 and name[0] == 'h' and name[1] >= '1' and name[1] <= '6')) element_style.bold = true;
@@ -567,22 +576,23 @@ pub fn renderHtml(input: []const u8, columns: usize, viewport_height: u16, resou
             const pushed_style = !void_element and style_stack_len < style_stack.len;
             if (pushed_style) {
                 const box_index: ?usize = if (block_layout and block_box_count < block_boxes.len and (element_style.background != null or element_style.background_image != null or element_style.border_width != 0 or element_style.border_top_width != 0 or element_style.min_height != 0 or element_style.height != null)) block_box_count else null;
-                style_stack[style_stack_len] = .{ .parent = active_style, .name = name, .parent_link = active_link, .parent_indent = flow_indent, .parent_right_inset = flow_right_inset, .parent_font_scale = flow_font_scale, .parent_align_start = flow_align_start, .parent_align_width = flow_align_width, .box_index = box_index };
+                style_stack[style_stack_len] = .{ .parent = active_style, .name = name, .parent_link = active_link, .parent_box = content_box, .box_index = box_index };
                 style_stack_len += 1;
                 if (box_index != null) block_box_count += 1;
             }
             active_style = if (pushed_style) element_style else parent_style;
-            if (block_layout) updateFlow(active_style, columns) else flow_style = active_style;
-            flow_font_scale = @max(1, active_style.font_scale);
-            rendering_style = element_style;
-            if (equalIgnoreCase(name, "q")) appendVisible('"', columns, &previous_space);
-            if (equalIgnoreCase(name, "button") or equalIgnoreCase(name, "select") or equalIgnoreCase(name, "textarea")) appendVisible('[', columns, &previous_space);
-            if (equalIgnoreCase(name, "option")) appendVisible(if (hasHtmlAttribute(tag, "selected")) '*' else ' ', columns, &previous_space);
-            if (equalIgnoreCase(name, "summary")) {
-                appendVisible('>', columns, &previous_space);
-                appendVisible(' ', columns, &previous_space);
+            if (pushed_style) {
+                if (block_layout) updateFlow(active_style, content_box, columns) else updateTextFlow(active_style, columns);
             }
-            if (equalIgnoreCase(name, "rt")) appendVisible('(', columns, &previous_space);
+            rendering_style = element_style;
+            if (equalIgnoreCase(name, "q")) appendVisible('"', &previous_space);
+            if (equalIgnoreCase(name, "button") or equalIgnoreCase(name, "select") or equalIgnoreCase(name, "textarea")) appendVisible('[', &previous_space);
+            if (equalIgnoreCase(name, "option")) appendVisible(if (hasHtmlAttribute(tag, "selected")) '*' else ' ', &previous_space);
+            if (equalIgnoreCase(name, "summary")) {
+                appendVisible('>', &previous_space);
+                appendVisible(' ', &previous_space);
+            }
+            if (equalIgnoreCase(name, "rt")) appendVisible('(', &previous_space);
             if (equalIgnoreCase(name, "pre")) {
                 preformatted = true;
                 newline();
@@ -601,7 +611,7 @@ pub fn renderHtml(input: []const u8, columns: usize, viewport_height: u16, resou
                         list_item_counter +|= 1;
                         var digits: [8]u8 = undefined;
                         const number = std.fmt.bufPrint(&digits, "{d}. ", .{list_item_counter}) catch "*. ";
-                        for (number) |ch| appendVisible(ch, columns, &previous_space);
+                        for (number) |ch| appendVisible(ch, &previous_space);
                     } else {
                         const marker: u8 = switch (element_style.list_style) {
                             .circle => 'o',
@@ -609,13 +619,13 @@ pub fn renderHtml(input: []const u8, columns: usize, viewport_height: u16, resou
                             .disc => '*',
                             .dash, .none, .decimal => '-',
                         };
-                        appendVisible(marker, columns, &previous_space);
-                        appendVisible(' ', columns, &previous_space);
+                        appendVisible(marker, &previous_space);
+                        appendVisible(' ', &previous_space);
                     }
                 }
             } else if (equalIgnoreCase(name, "td") or equalIgnoreCase(name, "th")) {
-                if (page_len != 0 and page[page_len - 1] != '\n') appendVisible('|', columns, &previous_space);
-                appendVisible(' ', columns, &previous_space);
+                if (page_len != 0 and page[page_len - 1] != '\n') appendVisible('|', &previous_space);
+                appendVisible(' ', &previous_space);
             } else if (block_layout) {
                 newline();
                 previous_space = true;
@@ -637,18 +647,18 @@ pub fn renderHtml(input: []const u8, columns: usize, viewport_height: u16, resou
                     addImage(tag, element_style, loaded, columns);
                 } else {
                     const alt = html.attribute(tag, "alt") orelse "[image unavailable]";
-                    appendText(alt, columns, &previous_space, false);
+                    appendText(alt, &previous_space, false);
                 }
             }
-            if (equalIgnoreCase(name, "input")) renderInput(tag, columns, &previous_space);
+            if (equalIgnoreCase(name, "input")) renderInput(tag, &previous_space);
             if (equalIgnoreCase(name, "canvas")) {
                 const label = "[Canvas]";
-                for (label) |ch| appendVisible(ch, columns, &previous_space);
+                for (label) |ch| appendVisible(ch, &previous_space);
             }
             rendering_style = active_style;
             continue;
         }
-        appendText(token.text, columns, &previous_space, preformatted);
+        appendText(token.text, &previous_space, preformatted);
     }
     for (style_stack[0..style_stack_len]) |frame| {
         if (frame.box_index) |index| block_boxes[index].end_line = page_lines;
@@ -761,7 +771,7 @@ fn drawStyledLine(x: u64, y: u64, start: usize, text: []const u8, normal_ink: u3
     var glyphs = GlyphPositions.init(x, start, text, width);
     for (text, 0..) |ch, column| {
         const index = start + column;
-        const px = glyphs.next(index, column, ch) orelse continue;
+        const px = glyphs.next(index) orelse continue;
         const flags = page_style_flags[index];
         const scale = @max(1, page_font_scales[index]);
         if (ch == 0xff) {
@@ -777,15 +787,16 @@ fn drawStyledLine(x: u64, y: u64, start: usize, text: []const u8, normal_ink: u3
             };
             continue;
         }
-        if (px + 6 * @as(u64, scale) > x + width) continue;
-        if ((flags & 2) != 0) canvas.fillRect(px, y, 6 * scale, row_height, cssColor(page_backgrounds[index]));
+        const advance = page_advances[index];
+        if (px + advance > x + width) continue;
+        if ((flags & 2) != 0) canvas.fillRect(px, y, advance, row_height, cssColor(page_backgrounds[index]));
         const ink = if ((flags & 1) != 0) cssColor(page_colors[index]) else if (page_link_ids[index] != 0) link_ink else normal_ink;
         const character = [_]u8{ch};
-        if ((flags & 128) != 0) font.drawTextItalic(px, y, &character, scale, ink) else font.drawText(px, y, &character, scale, ink);
-        if ((flags & 4) != 0) font.drawText(px + scale, y, &character, scale, ink);
-        if ((flags & 8) != 0 or page_link_ids[index] != 0) canvas.fillRect(px, y + 7 * scale, 5 * scale, scale, ink);
-        if ((page_decorations[index] & 1) != 0) canvas.fillRect(px, y + 4 * scale, 5 * scale, scale, ink);
-        if ((page_decorations[index] & 2) != 0) canvas.fillRect(px, y, 5 * scale, scale, ink);
+        if ((flags & 128) != 0) font.drawTextItalicSized(px, y, &character, scale, fontSize(scale), ink) else font.drawTextSized(px, y, &character, scale, fontSize(scale), ink);
+        if ((flags & 4) != 0) font.drawTextSized(px + 1, y, &character, scale, fontSize(scale), ink);
+        if ((flags & 8) != 0 or page_link_ids[index] != 0) canvas.fillRect(px, y + 7 * scale, advance, 1, ink);
+        if ((page_decorations[index] & 1) != 0) canvas.fillRect(px, y + 4 * scale, advance, 1, ink);
+        if ((page_decorations[index] & 2) != 0) canvas.fillRect(px, y, advance, 1, ink);
     }
 }
 
@@ -798,19 +809,45 @@ fn addImage(tag: []const u8, style: css.Computed, picture: media.Picture, column
     appendPage(0xff);
     page_media_ids[marker] = index;
     page_media_widths[marker] = dimensions.w;
+    page_advances[marker] = dimensions.w;
     page_media_heights[marker] = dimensions.h;
     page_media_fit_modes[marker] = @backingInt(style.object_fit);
     page_line_heights[marker] = @intCast(@max(10, dimensions.h));
     newline();
 }
 
-fn appendText(text: []const u8, columns: usize, previous_space: *bool, preformatted: bool) void {
+fn wrapWord(input: []const u8) void {
+    if (page_len == 0 or page[page_len - 1] != ' ') return;
+    const width = flow_align_width;
+    var word_width: usize = 0;
+    var i: usize = 0;
+    while (i < input.len and !std.ascii.isWhitespace(input[i]) and word_width <= width) {
+        if (input[i] == '&') {
+            if (htmlEntity(input, i)) |entity| {
+                i += entity.consumed;
+                word_width += glyphAdvance(entity.ch, rendering_style);
+                continue;
+            }
+        }
+        i += 1;
+        word_width += glyphAdvance(if (input[i - 1] < 0x80) input[i - 1] else '?', rendering_style);
+    }
+    if (word_width > width) return;
+    if (line_width <= width - word_width) return;
+    page_len -= 1;
+    newline();
+}
+
+fn appendText(text: []const u8, previous_space: *bool, preformatted: bool) void {
     var i: usize = 0;
     while (i < text.len and page_len < page.len) {
         const ch = text[i];
+        if (!preformatted and previous_space.* and !std.ascii.isWhitespace(ch) and !flow_style.white_space_nowrap) {
+            wrapWord(text[i..]);
+        }
         if (ch == '&') {
             if (htmlEntity(text, i)) |entity| {
-                appendVisible(entity.ch, columns, previous_space);
+                appendVisible(entity.ch, previous_space);
                 i += entity.consumed;
                 continue;
             }
@@ -822,7 +859,7 @@ fn appendText(text: []const u8, columns: usize, previous_space: *bool, preformat
             for (0..4) |_| appendPage(' ');
         } else if (preformatted and ch == ' ') {
             appendPage(' ');
-        } else appendVisible(ch, columns, previous_space);
+        } else appendVisible(ch, previous_space);
         i += 1;
     }
 }
@@ -861,7 +898,7 @@ const Rows = struct {
         const start = self.pos;
         const end = std.mem.indexOfScalarPos(u8, page[0..page_len], start, '\n') orelse page_len;
         self.pos = if (end == page_len) end else end + 1;
-        var height: u64 = 10;
+        var height: u64 = if (start == end) 1 else 10;
         for (page_line_heights[start..@min(self.pos, page_len)]) |line_height| height = @max(height, line_height);
         return .{ .start = start, .end = end, .height = height };
     }
@@ -893,9 +930,14 @@ fn clampScroll(height: u64) void {
     page_scroll = @min(page_scroll, maximum);
 }
 
-pub fn draw(x: u64, y: u64, width: u64, height: u64, normal_ink: u32, link_ink: u32) void {
+pub fn draw(x: u64, y: u64, width: u64, height: u64, dark: bool) void {
+    // Keep the default text and the resolved CSS palette paired until navigation.
+    const page_dark = document_dark orelse dark;
+    const normal_ink = cssColor(if (page_dark) 0xebebeb else 0x202020);
+    const link_ink = cssColor(if (page_dark) 0x7fbcff else 0x194e99);
     clampScroll(height);
-    if (page_background_color) |background| canvas.fillRect(x, y, width, height, cssColor(background));
+    const background = page_background_color orelse if (page_dark) @as(u24, 0x222222) else 0xffffff;
+    canvas.fillRect(x, y, width, height, cssColor(background));
     drawBlockBoxes(x, y, width, height, page_scroll);
     var rows = visibleRows();
     var top: u64 = 0;
@@ -917,13 +959,12 @@ pub fn linkAt(x: u64, y: u64, width: u64, height: u64) ?[]const u8 {
         if (y >= top) continue;
         const line = page[row.start..row.end];
         if (line.len == 0) return null;
-        const cell_width = @as(u64, 6) * @max(1, page_font_scales[row.start]);
         var glyphs = GlyphPositions.init(0, row.start, line, width);
         for (line, 0..) |ch, column| {
             const index = row.start + column;
-            const left = glyphs.next(index, column, ch) orelse continue;
-            const glyph_width = if (ch == 0xff) @min(@as(u64, page_media_widths[index]), width - left) else cell_width;
-            if (ch != 0xff and left + 6 * @as(u64, @max(1, page_font_scales[index])) > width) continue;
+            const left = glyphs.next(index) orelse continue;
+            const glyph_width = if (ch == 0xff) @min(@as(u64, page_media_widths[index]), width - left) else page_advances[index];
+            if (ch != 0xff and left + glyph_width > width) continue;
             const id = page_link_ids[index];
             if (id != 0 and x >= left and x < left + glyph_width) {
                 const link = &links[id - 1];
@@ -936,31 +977,24 @@ pub fn linkAt(x: u64, y: u64, width: u64, height: u64) ?[]const u8 {
 }
 
 const GlyphPositions = struct {
-    x: u64,
-    cell_width: u64,
-    offset: usize,
-    width: u64,
-    extra: i64 = 0,
+    next_x: u64,
+    right: u64,
 
     fn init(x: u64, start: usize, text: []const u8, width: u64) GlyphPositions {
-        const layout = page_style_flags[start];
-        const line_scale: u64 = @max(1, page_font_scales[start]);
-        const cell_width = 6 * line_scale;
-        var leading_spaces: usize = 0;
-        while (leading_spaces < text.len and text[leading_spaces] == ' ') : (leading_spaces += 1) {}
-        const content_length = text.len - leading_spaces;
-        const align_start: usize = page_align_starts[start];
-        const align_width = if (page_align_widths[start] == 0) @as(usize, @intCast(width / cell_width)) else @as(usize, page_align_widths[start]);
-        const spare = align_width -| content_length;
-        const desired_start = align_start + (if ((layout & 16) != 0) spare / 2 else if ((layout & 32) != 0) spare else 0);
-        const offset = desired_start -| leading_spaces;
-        return .{ .x = x, .cell_width = cell_width, .offset = offset, .width = width };
+        const flags = page_style_flags[start];
+        const left = @min(width, page_align_starts[start]);
+        const box_width = @min(width - left, page_align_widths[start]);
+        var line_width_px: u64 = 0;
+        const trimmed = std.mem.trimEnd(u8, text, " ");
+        for (page_advances[start..][0..trimmed.len]) |advance| line_width_px += advance;
+        const spare = box_width -| line_width_px;
+        const offset = if ((flags & 16) != 0) spare / 2 else if ((flags & 32) != 0) spare else 0;
+        return .{ .next_x = x + left + offset, .right = x + width };
     }
 
-    fn next(self: *GlyphPositions, index: usize, column: usize, ch: u8) ?u64 {
-        const px = @as(i64, @intCast(self.x + (column + self.offset) * self.cell_width)) + self.extra;
-        self.extra += @as(i64, page_letter_spacing[index]) + if (ch == ' ') @as(i64, page_word_spacing[index]) else 0;
-        const position: u64 = @intCast(@max(@as(i64, @intCast(self.x)), px));
-        return if (position - self.x < self.width) position else null;
+    fn next(self: *GlyphPositions, index: usize) ?u64 {
+        const position = self.next_x;
+        self.next_x += page_advances[index];
+        return if (position < self.right) position else null;
     }
 };

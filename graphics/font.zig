@@ -121,12 +121,14 @@ pub fn glyph(ch: u8) [7]u8 {
 }
 
 pub fn drawText(x: u64, y: u64, text: []const u8, scale: u64, ink: u32) void {
+    drawTextSized(x, y, text, scale, @as(u8, @intCast(@min(scale, 4))) * 10, ink);
+}
+
+pub fn drawTextSized(x: u64, y: u64, text: []const u8, scale: u64, pixel_size: u8, ink: u32) void {
     if (text.len == 0 or scale == 0) return;
     if (face) |*active_face| {
         var cursor = x;
         var offset: usize = 0;
-        const bounded_scale: u64 = @min(scale, 4);
-        const pixel_size: u8 = @intCast(bounded_scale * 10);
         while (offset < text.len and cursor < s.fb.width) {
             const decoded = decodeUtf8(text[offset..]);
             const cached = getGlyph(active_face, decoded.codepoint, pixel_size) orelse {
@@ -147,13 +149,12 @@ pub fn drawText(x: u64, y: u64, text: []const u8, scale: u64, ink: u32) void {
 }
 
 /// Draws text with a small rightward shear, used for CSS italic/oblique text.
-pub fn drawTextItalic(x: u64, y: u64, text: []const u8, scale: u64, ink: u32) void {
+pub fn drawTextItalicSized(x: u64, y: u64, text: []const u8, scale: u64, pixel_size: u8, ink: u32) void {
     if (text.len == 0 or scale == 0) return;
     if (face) |*active_face| {
         var cursor = x;
         var offset: usize = 0;
         const bounded_scale: u64 = @min(scale, 4);
-        const pixel_size: u8 = @intCast(bounded_scale * 10);
         while (offset < text.len and cursor < s.fb.width) {
             const decoded = decodeUtf8(text[offset..]);
             const cached = getGlyph(active_face, decoded.codepoint, pixel_size) orelse {
@@ -173,11 +174,14 @@ pub fn drawTextItalic(x: u64, y: u64, text: []const u8, scale: u64, ink: u32) vo
 }
 
 pub fn textWidth(text: []const u8, scale: u64) u64 {
+    return textWidthSized(text, scale, @as(u8, @intCast(@min(scale, 4))) * 10);
+}
+
+pub fn textWidthSized(text: []const u8, scale: u64, pixel_size: u8) u64 {
     if (text.len == 0 or scale == 0) return 0;
     if (face) |*active_face| {
         var width: u64 = 0;
         var offset: usize = 0;
-        const pixel_size: u8 = @intCast(@as(u64, @min(scale, 4)) * 10);
         while (offset < text.len) {
             const decoded = decodeUtf8(text[offset..]);
             if (getGlyph(active_face, decoded.codepoint, pixel_size)) |cached| {

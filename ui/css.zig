@@ -130,6 +130,7 @@ const Rule = struct {
 };
 
 pub const Sheet = struct {
+    dark: bool = false,
     rules: [max_rules]Rule = @splat(.{}),
     count: usize = 0,
 
@@ -141,7 +142,7 @@ pub const Sheet = struct {
             const open = std.mem.indexOfScalarPos(u8, source, cursor, '{') orelse break;
             const close = std.mem.indexOfScalarPos(u8, source, open + 1, '}') orelse break;
             const selectors = std.mem.trim(u8, source[cursor..open], " \t\r\n");
-            const patch = parseDeclarations(source[open + 1 .. close], viewport_height);
+            const patch = parseDeclarations(source[open + 1 .. close], viewport_height, self.dark);
             var selector_start: usize = 0;
             while (selector_start < selectors.len and self.count < self.rules.len) {
                 const comma = std.mem.indexOfScalarPos(u8, selectors, selector_start, ',') orelse selectors.len;
@@ -176,6 +177,7 @@ pub const Sheet = struct {
             .letter_spacing = parent.letter_spacing,
             .word_spacing = parent.word_spacing,
             .italic = parent.italic,
+            .margin = if (std.ascii.eqlIgnoreCase(tag, "p")) .{ .top = 16, .bottom = 16 } else .{},
         };
         var advanced_scores = AdvancedScores{};
         var color_score: u16 = 0;
@@ -346,7 +348,7 @@ pub const Sheet = struct {
             cascadeAdvanced(u8, &result.border_top_width, rule.patch.border_top_width, score, &advanced_scores.border_top_width);
         }
 
-        const inline_patch = parseDeclarations(inline_style, viewport_height);
+        const inline_patch = parseDeclarations(inline_style, viewport_height, self.dark);
         if (inline_patch.color) |value| result.color = value;
         if (inline_patch.background) |value| result.background = value;
         if (inline_patch.bold) |value| result.bold = value;
@@ -388,7 +390,7 @@ pub const Sheet = struct {
     }
 };
 
-pub fn parseDeclarations(input: []const u8, viewport_height: u16) Patch {
+fn parseDeclarations(input: []const u8, viewport_height: u16, dark: bool) Patch {
     var result = Patch{};
     var cursor: usize = 0;
     while (cursor < input.len) {
@@ -398,9 +400,9 @@ pub fn parseDeclarations(input: []const u8, viewport_height: u16) Patch {
             const name = std.mem.trim(u8, declaration[0..colon], " \t\r\n");
             const value = std.mem.trim(u8, declaration[colon + 1 ..], " \t\r\n");
             if (std.ascii.eqlIgnoreCase(name, "color")) {
-                result.color = parseColor(value) orelse result.color;
+                result.color = parseColor(value, dark) orelse result.color;
             } else if (std.ascii.eqlIgnoreCase(name, "background-color") or std.ascii.eqlIgnoreCase(name, "background")) {
-                result.background = parseColor(value) orelse result.background;
+                result.background = parseColor(value, dark) orelse result.background;
                 result.background_image = parseImageUrl(value) orelse result.background_image;
             } else if (std.ascii.eqlIgnoreCase(name, "background-image")) {
                 result.background_image = parseImageUrl(value) orelse result.background_image;
@@ -421,7 +423,7 @@ pub fn parseDeclarations(input: []const u8, viewport_height: u16) Patch {
                 result.line_through = containsIgnoreCase(value, "line-through");
                 result.overline = containsIgnoreCase(value, "overline");
             } else if (std.ascii.eqlIgnoreCase(name, "text-decoration-color")) {
-                result.color = parseColor(value) orelse result.color;
+                result.color = parseColor(value, dark) orelse result.color;
             } else if (oneOfIgnoreCase(name, &.{ "text-decoration-style", "text-decoration-thickness", "text-underline-offset" })) {
                 if (std.ascii.eqlIgnoreCase(value, "none")) result.underline = false else if (std.ascii.eqlIgnoreCase(name, "text-decoration-thickness")) result.underline = true;
             } else if (std.ascii.eqlIgnoreCase(name, "text-transform")) {
@@ -518,7 +520,7 @@ pub fn parseDeclarations(input: []const u8, viewport_height: u16) Patch {
                 const length = parseLength(value, viewport_height) orelse 0;
                 result.border_width = @intCast(@min(8, length));
             } else if (oneOfIgnoreCase(name, &.{ "border-top-color", "border-right-color", "border-bottom-color", "border-left-color" })) {
-                result.border_color = parseColor(value) orelse result.border_color;
+                result.border_color = parseColor(value, dark) orelse result.border_color;
             } else if (oneOfIgnoreCase(name, &.{ "border-top-style", "border-right-style", "border-bottom-style", "border-left-style" })) {
                 result.border_style = parseBorderStyleValue(value) orelse result.border_style;
             } else if (oneOfIgnoreCase(name, &.{ "border-top-left-radius", "border-top-right-radius", "border-bottom-right-radius", "border-bottom-left-radius" })) {
@@ -527,20 +529,20 @@ pub fn parseDeclarations(input: []const u8, viewport_height: u16) Patch {
             } else if (oneOfIgnoreCase(name, &.{ "border-top", "border-right", "border-bottom", "border-left", "outline" })) {
                 var parts = std.mem.tokenizeScalar(u8, value, ' ');
                 while (parts.next()) |part| {
-                    if (parseLength(part, viewport_height)) |length| result.border_width = @intCast(@min(8, length)) else if (parseColor(part)) |color| result.border_color = color else if (parseBorderStyleValue(part)) |style| result.border_style = style;
+                    if (parseLength(part, viewport_height)) |length| result.border_width = @intCast(@min(8, length)) else if (parseColor(part, dark)) |color| result.border_color = color else if (parseBorderStyleValue(part)) |style| result.border_style = style;
                 }
             } else if (oneOfIgnoreCase(name, &.{ "outline-width", "outline-offset" })) {
                 const length = parseLength(value, viewport_height) orelse 0;
                 result.border_width = @intCast(@min(8, length));
             } else if (std.ascii.eqlIgnoreCase(name, "outline-color")) {
-                result.border_color = parseColor(value) orelse result.border_color;
+                result.border_color = parseColor(value, dark) orelse result.border_color;
             } else if (std.ascii.eqlIgnoreCase(name, "outline-style")) {
                 result.border_style = parseBorderStyleValue(value) orelse result.border_style;
             } else if (std.ascii.eqlIgnoreCase(name, "border-width")) {
                 const length = parseLength(value, viewport_height) orelse 0;
                 result.border_width = @intCast(@min(8, length));
             } else if (std.ascii.eqlIgnoreCase(name, "border-color")) {
-                result.border_color = parseColor(value) orelse result.border_color;
+                result.border_color = parseColor(value, dark) orelse result.border_color;
             } else if (std.ascii.eqlIgnoreCase(name, "border-radius")) {
                 const length = parseLength(value, viewport_height) orelse 0;
                 result.border_radius = @intCast(@min(24, length));
@@ -550,7 +552,7 @@ pub fn parseDeclarations(input: []const u8, viewport_height: u16) Patch {
                     if (std.mem.indexOf(u8, part, "px") != null) {
                         const length = parseLength(part, viewport_height) orelse 0;
                         result.border_width = @intCast(@min(8, length));
-                    } else if (parseColor(part)) |color| result.border_color = color;
+                    } else if (parseColor(part, dark)) |color| result.border_color = color;
                 }
             } else if (std.ascii.eqlIgnoreCase(name, "max-width")) {
                 result.max_width = parseLength(value, viewport_height) orelse result.max_width;
@@ -764,13 +766,15 @@ fn hasClass(classes: []const u8, expected: []const u8) bool {
     return false;
 }
 
-fn parseColor(input: []const u8) ?u24 {
-    const value = std.mem.trim(u8, input, " \t\r\n");
-    if (std.ascii.startsWithIgnoreCase(value, "light-dark(")) {
-        const first = std.mem.indexOfScalar(u8, value, ',') orelse return null;
-        const close = std.mem.lastIndexOfScalar(u8, value, ')') orelse return null;
-        if (close <= first) return null;
-        return parseColor(std.mem.trim(u8, value[first + 1 .. close], " \t\r\n"));
+fn parseColor(input: []const u8, dark: bool) ?u24 {
+    var value = std.mem.trim(u8, input, " \t\r\n");
+    const prefix = "light-dark(";
+    if (std.ascii.startsWithIgnoreCase(value, prefix)) {
+        if (!std.mem.endsWith(u8, value, ")")) return null;
+        const arguments = value[prefix.len .. value.len - 1];
+        const comma = std.mem.indexOfScalar(u8, arguments, ',') orelse return null;
+        const selected = if (dark) arguments[comma + 1 ..] else arguments[0..comma];
+        value = std.mem.trim(u8, selected, " \t\r\n");
     }
     if (value.len == 4 and value[0] == '#') {
         const r = std.fmt.parseInt(u8, value[1..2], 16) catch return null;
