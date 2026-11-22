@@ -1,5 +1,7 @@
 # AetherOS
 
+<p align="center"><img src="assets/aetheros-logo.png" alt="AetherOS logo" width="160"></p>
+
 AetherOS is a small 64-bit x86 kernel written in Zig. The project includes a standalone UEFI ELF loader in `boot/uefi.zig`; the build no longer uses Limine.
 
 ## Build on Windows
