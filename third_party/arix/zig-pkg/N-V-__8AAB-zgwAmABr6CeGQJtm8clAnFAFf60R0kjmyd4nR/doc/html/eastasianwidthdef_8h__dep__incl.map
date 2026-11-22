@@ -1,0 +1,10 @@
+<map id="eastasianwidthdef.h" name="eastasianwidthdef.h">
+<area shape="rect" id="Node000001" title=" " alt="" coords="118,5,256,31"/>
+<area shape="rect" id="Node000002" href="$eastasianwidthdata_8c.html" title=" " alt="" coords="5,79,150,105"/>
+<area shape="poly" id="edge1_Node000001_Node000002" title=" " alt="" coords="154,42,98,81,95,76,158,38"/>
+<area shape="rect" id="Node000003" href="$eastasianwidthdef_8c.html" title=" " alt="" coords="64,153,201,178"/>
+<area shape="poly" id="edge3_Node000001_Node000003" title=" " alt="" coords="182,44,164,106,141,154,137,150,159,104,178,47"/>
+<area shape="rect" id="Node000004" href="$linebreak_8c.html" title="Implementation of the line breaking algorithm as described in Unicode Standard Annex 14." alt="" coords="225,79,309,105"/>
+<area shape="poly" id="edge4_Node000001_Node000004" title=" " alt="" coords="212,39,256,79,251,79,211,44"/>
+<area shape="poly" id="edge2_Node000002_Node000003" title=" " alt="" coords="97,114,126,152,120,152,94,119"/>
+</map>

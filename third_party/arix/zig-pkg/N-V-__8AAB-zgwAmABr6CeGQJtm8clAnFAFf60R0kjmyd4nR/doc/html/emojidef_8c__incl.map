@@ -1,0 +1,17 @@
+<map id="emojidef.c" name="emojidef.c">
+<area shape="rect" id="Node000001" title="Emoji&#45;related routine and data that are used internally." alt="" coords="58,5,139,31"/>
+<area shape="rect" id="Node000002" href="$emojidef_8h.html" title="Definitions of internal data structure and function for extended pictographs." alt="" coords="58,153,139,178"/>
+<area shape="poly" id="edge1_Node000001_Node000002" title=" " alt="" coords="80,34,62,54,45,80,43,96,48,112,72,142,67,143,43,115,38,97,40,78,58,50,83,29"/>
+<area shape="rect" id="Node000003" href="$unibreakdef_8h.html" title="Header file for private definitions in the libunibreak library." alt="" coords="89,226,188,252"/>
+<area shape="poly" id="edge8_Node000001_Node000003" title=" " alt="" coords="115,29,139,50,157,78,165,113,165,150,159,184,151,213,146,210,154,183,159,149,160,114,152,80,135,54,116,34"/>
+<area shape="rect" id="Node000007" href="$emojidata_8c.html" title=" " alt="" coords="54,79,143,105"/>
+<area shape="poly" id="edge6_Node000001_Node000007" title=" " alt="" coords="99,29,101,64,96,63,98,34"/>
+<area shape="poly" id="edge2_Node000002_Node000003" title=" " alt="" coords="106,176,127,213,122,213,104,181"/>
+<area shape="rect" id="Node000004" title=" " alt="" coords="5,300,80,326"/>
+<area shape="poly" id="edge3_Node000003_Node000004" title=" " alt="" coords="125,252,72,293,69,289,120,253"/>
+<area shape="rect" id="Node000005" title=" " alt="" coords="104,300,173,326"/>
+<area shape="poly" id="edge4_Node000003_Node000005" title=" " alt="" coords="140,250,141,285,136,283,137,254"/>
+<area shape="rect" id="Node000006" href="$unibreakbase_8h.html" title="Header file for common definitions in the libunibreak library." alt="" coords="197,300,306,326"/>
+<area shape="poly" id="edge5_Node000003_Node000006" title=" " alt="" coords="158,250,222,291,217,292,157,255"/>
+<area shape="poly" id="edge7_Node000007_Node000002" title=" " alt="" coords="99,102,101,137,96,136,98,107"/>
+</map>

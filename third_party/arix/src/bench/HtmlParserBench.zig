@@ -1,0 +1,44 @@
+/// Benchmark for HTML parser which contains HTML tokenizer and tree_builder.
+const Self = @This();
+const std = @import("std");
+const strale = @import("strale");
+const Parser = @import("../renderer/html/Parser.zig");
+const BufferDeque = @import("../renderer/utils/buffer_deque.zig").BufferDeque;
+const html_input = @import("html_input.zig");
+const Buffer = BufferDeque(.utf8, .not_atomic, true);
+
+allocator: std.mem.Allocator,
+arena: ?std.heap.ArenaAllocator = null,
+buffer: ?Buffer = null,
+
+pub fn init(allocator: std.mem.Allocator) Self {
+    return .{ .allocator = allocator };
+}
+
+pub fn prepare(self: *Self, input: []const u8) !void {
+    self.arena = std.heap.ArenaAllocator.init(self.allocator);
+    const allocator = self.arena.?.allocator();
+    strale.setGlobalAlloc(allocator);
+    self.buffer = try Buffer.init(allocator);
+    _ = try html_input.fill(&self.buffer.?, allocator, input);
+}
+
+pub fn step(self: *Self) !usize {
+    const allocator = self.arena.?.allocator();
+    strale.setGlobalAlloc(allocator);
+    const parser = try Parser.create(allocator, .{ .tokenizer = .{
+        .exact_errors = false,
+        .track_lines = false,
+    }, .tree_builder = .{} });
+    defer parser.destroy();
+    try parser.tokenizer.step_E(&self.buffer.?);
+    std.mem.doNotOptimizeAway(parser.tree_builder.document);
+    return parser.errors.items.len;
+}
+
+pub fn finish(self: *Self) void {
+    self.buffer.?.deinit();
+    self.buffer = null;
+    self.arena.?.deinit();
+    self.arena = null;
+}

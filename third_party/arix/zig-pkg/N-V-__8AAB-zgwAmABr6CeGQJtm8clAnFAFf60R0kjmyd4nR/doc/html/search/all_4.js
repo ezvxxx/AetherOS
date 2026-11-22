@@ -1,0 +1,23 @@
+var searchData=
+[
+  ['eastasianwidthclass_0',['EastAsianWidthClass',['../eastasianwidthdef_8h.html#a266956d30dfbb187a880606ad41466a4',1,'eastasianwidthdef.h']]],
+  ['eastasianwidthdata_2ec_1',['eastasianwidthdata.c',['../eastasianwidthdata_8c.html',1,'']]],
+  ['eastasianwidthdef_2ec_2',['eastasianwidthdef.c',['../eastasianwidthdef_8c.html',1,'']]],
+  ['eastasianwidthdef_2eh_3',['eastasianwidthdef.h',['../eastasianwidthdef_8h.html',1,'']]],
+  ['eastasianwidthproperties_4',['EastAsianWidthProperties',['../structEastAsianWidthProperties.html',1,'']]],
+  ['eaw_5fa_5',['EAW_A',['../eastasianwidthdef_8h.html#a266956d30dfbb187a880606ad41466a4a2337c73944bc1ebde9833d413b712255',1,'eastasianwidthdef.h']]],
+  ['eaw_5ff_6',['EAW_F',['../eastasianwidthdef_8h.html#a266956d30dfbb187a880606ad41466a4a97f33598266dcca5467a70cabf11fd32',1,'eastasianwidthdef.h']]],
+  ['eaw_5fh_7',['EAW_H',['../eastasianwidthdef_8h.html#a266956d30dfbb187a880606ad41466a4a56df05734411dd4ca8e1f186a67f6bdc',1,'eastasianwidthdef.h']]],
+  ['eaw_5fn_8',['EAW_N',['../eastasianwidthdef_8h.html#a266956d30dfbb187a880606ad41466a4a87915bfa8cf6e02077299f9447c4c727',1,'eastasianwidthdef.h']]],
+  ['eaw_5fna_9',['EAW_Na',['../eastasianwidthdef_8h.html#a266956d30dfbb187a880606ad41466a4a2c315ea229759b2936addd47b327ebc9',1,'eastasianwidthdef.h']]],
+  ['eaw_5fw_10',['EAW_W',['../eastasianwidthdef_8h.html#a266956d30dfbb187a880606ad41466a4a0f0611515bcd38f2cc59c3ca27b90b5e',1,'eastasianwidthdef.h']]],
+  ['elb25_11',['eLb25',['../structLineBreakContext.html#a23f42c7b90a20c492ce6d96d6dd7ac91',1,'LineBreakContext']]],
+  ['emojidata_2ec_12',['emojidata.c',['../emojidata_8c.html',1,'']]],
+  ['emojidef_2ec_13',['emojidef.c',['../emojidef_8c.html',1,'']]],
+  ['emojidef_2eh_14',['emojidef.h',['../emojidef_8h.html',1,'']]],
+  ['end_15',['end',['../structEastAsianWidthProperties.html#a9a2f1dfa0da34c13a7e27439b74c610f',1,'EastAsianWidthProperties::end'],['../structExtendedPictograpic.html#ae9326370031043f3991d1ff9c1f956f3',1,'ExtendedPictograpic::end'],['../structGraphemeBreakProperties.html#a75f85f2123204dca4a552498dccb18f0',1,'GraphemeBreakProperties::end'],['../structIndicConjunctBreakProperties.html#a8238b19565b278d40cda6eef8b88e6f2',1,'IndicConjunctBreakProperties::end'],['../structLineBreakProperties.html#af6ff463e88f6c694661aa10222404a14',1,'LineBreakProperties::end'],['../structLineBreakAuxRange.html#af99715be65b9e5fe1141e61d012c4f7a',1,'LineBreakAuxRange::end'],['../structWordBreakProperties.html#a7c8c7792e33b8cc829cb881951727d3c',1,'WordBreakProperties::end']]],
+  ['ends_5fwith_16',['ENDS_WITH',['../linebreak_8c.html#a6cc202b1cd8b4ed18d0a7a0a381afcb5',1,'linebreak.c']]],
+  ['eos_17',['EOS',['../unibreakdef_8h.html#aadbbc7b02d94a4c18646813ac8d7dec1',1,'unibreakdef.h']]],
+  ['epending_18',['ePending',['../structLineBreakContext.html#a88e32f8db429e003495d5659f59de4e4',1,'LineBreakContext']]],
+  ['extendedpictograpic_19',['ExtendedPictograpic',['../structExtendedPictograpic.html',1,'']]]
+];

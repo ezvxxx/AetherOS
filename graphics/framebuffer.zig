@@ -1,0 +1,20 @@
+//! Framebuffer description passed by the AetherOS boot protocol.
+pub const Framebuffer = extern struct {
+    address: ?[*]u8,
+    width: u64,
+    height: u64,
+    pitch: u64,
+    bpp: u16,
+    memory_model: u8,
+    red_mask_size: u8,
+    red_mask_shift: u8,
+    green_mask_size: u8,
+    green_mask_shift: u8,
+    blue_mask_size: u8,
+    blue_mask_shift: u8,
+    unused: [7]u8,
+    edid_size: u64 = 0,
+    edid: ?*anyopaque = null,
+    mode_count: u64 = 0,
+    modes: ?[*]?*anyopaque = null,
+};

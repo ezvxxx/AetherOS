@@ -1,0 +1,41 @@
+.{
+    .name = .zss,
+    .version = "0.0.0",
+    .fingerprint = 0x6b393e274b72e099,
+    .minimum_zig_version = "0.15.1",
+    .paths = .{
+        "demo/",
+        "docs/",
+        "examples/",
+        "source/",
+        "test/",
+        "build.zig",
+        "build.zig.zon",
+        "LICENSE.md",
+        "LICENSE-CC0.txt",
+        "LICENSE-OFL.txt",
+        "README.md",
+    },
+    .dependencies = .{
+        .harfbuzz = .{
+            .url = "git+https://github.com/chadwain/harfbuzz#cf91604764a6b5ca4bbca5b6bd30b4bce7818740",
+            .hash = "harfbuzz-10.0.0-Ip1VAqKZAAAMDLsbLGCMjteoICSClVMbCj_nc-XIi8Zc",
+            .lazy = true,
+        },
+        .@"mach-glfw" = .{
+            .url = "git+https://github.com/chadwain/mach-glfw#57c7ec7e2a87ae88a33d4b73fa05a47c2227db2b",
+            .hash = "mach_glfw-0.2.0-dJFhSMQrBQBRtxdyMlmIVGbTd3l_Zx_d4wfuLgF-AE0g",
+            .lazy = true,
+        },
+        .zgl = .{
+            .url = "git+https://github.com/ziglibs/zgl#caf811fb8b778184128772e57dfcb96be2351c43",
+            .hash = "zgl-1.1.0-p_NpAJJECgDSDHYHH_W6rX0snxnFoJ4JZZ0FV5_vqjjy",
+            .lazy = true,
+        },
+        .zigimg = .{
+            .url = "git+https://github.com/zigimg/zigimg#eab2522c023b9259db8b13f2f90d609b7437e5f6",
+            .hash = "zigimg-0.1.0-8_eo2vUZFgAAtN1c6dAO5DdqL0d4cEWHtn6iR5ucZJti",
+            .lazy = true,
+        },
+    },
+}

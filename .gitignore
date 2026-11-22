@@ -1,0 +1,13 @@
+# Generated build products, disk images, QEMU output, and local caches.
+/build/
+/2026-10-23-not-a-file
+**/build/
+**/zig-cache/
+**/zig-out/
+**/.cache/
+**/__pycache__/
+**/*.py[cod]
+
+# Nested repository metadata and transient Zig dependency downloads.
+**/.git/
+third_party/arix/zig-pkg/.tmp-*/

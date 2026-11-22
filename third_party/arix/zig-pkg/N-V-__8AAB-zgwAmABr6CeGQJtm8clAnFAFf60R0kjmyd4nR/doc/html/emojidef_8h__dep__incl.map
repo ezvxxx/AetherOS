@@ -1,0 +1,12 @@
+<map id="emojidef.h" name="emojidef.h">
+<area shape="rect" id="Node000001" title="Definitions of internal data structure and function for extended pictographs." alt="" coords="140,5,221,31"/>
+<area shape="rect" id="Node000002" href="$emojidata_8c.html" title=" " alt="" coords="5,79,94,105"/>
+<area shape="poly" id="edge1_Node000001_Node000002" title=" " alt="" coords="144,41,73,81,70,76,146,36"/>
+<area shape="rect" id="Node000003" href="$emojidef_8c.html" title="Emoji&#45;related routine and data that are used internally." alt="" coords="49,153,130,178"/>
+<area shape="poly" id="edge3_Node000001_Node000003" title=" " alt="" coords="167,44,99,154,95,151,162,44"/>
+<area shape="rect" id="Node000004" href="$graphemebreak_8c.html" title="Implementation of the grapheme breaking algorithm as described in Unicode Standard Annex 29." alt="" coords="169,79,290,105"/>
+<area shape="poly" id="edge4_Node000001_Node000004" title=" " alt="" coords="198,41,224,79,219,78,196,46"/>
+<area shape="rect" id="Node000005" href="$wordbreak_8c.html" title="Implementation of the word breaking algorithm as described in Unicode Standard Annex 29." alt="" coords="314,79,406,105"/>
+<area shape="poly" id="edge5_Node000001_Node000005" title=" " alt="" coords="225,34,332,78,327,79,225,40"/>
+<area shape="poly" id="edge2_Node000002_Node000003" title=" " alt="" coords="65,116,85,152,80,152,62,120"/>
+</map>

@@ -1,0 +1,224 @@
+const Parser = @This();
+
+const std = @import("std");
+const Stream = @import("../syntax/ComponentValueStream.zig");
+const parsing_results = @import("../syntax/parsing_results.zig");
+const ComponentValue = parsing_results.ComponentValue;
+const PreservedToken = parsing_results.PreservedToken;
+const types = @import("types.zig");
+const String = @import("../String.zig");
+const SelectorList = types.SelectorList;
+const ComplexSelector = types.ComplexSelector;
+const Mode = types.Mode;
+const Component = types.ComplexSelector.Component;
+const Combinator = types.Combinator;
+const SimpleSelector = types.SimpleSelector;
+const AttributeSelector = types.AttributeSelector;
+const PseudoClassSelector = types.PseudoClassSelector;
+const namespace = @import("../namespace.zig");
+const grammar = @import("../syntax/grammar.zig");
+
+allocator: std.mem.Allocator,
+input: *Stream,
+components: std.ArrayList(Component) = .empty,
+
+pub fn init(allocator: std.mem.Allocator, input: *Stream) Parser {
+    return .{
+        .allocator = allocator,
+        .input = input,
+    };
+}
+
+pub fn deinit(self: *Parser) void {
+    self.components.deinit(self.allocator);
+}
+
+pub fn append(self: *Parser, component: Component) !void {
+    try self.components.append(self.allocator, component);
+}
+
+pub fn consumeSelector(self: *Parser, comptime mode: Mode) !void {
+    while (true) {
+        try self.consumeUnit(mode);
+        const end = self.input.index;
+        self.input.discardWhitespace();
+
+        if (mode.kind != .complex or self.input.empty() or self.isToken(.comma)) return;
+        const cb: Combinator = self.consumeCombinator() orelse blk: {
+            // Check if index change.
+            if (self.input.index == end) return error.InvalidSelector;
+            break :blk .descendant;
+        };
+        try self.append(.{ .combinator = cb });
+        self.input.discardWhitespace();
+    }
+}
+
+pub fn consumeUnit(self: *Parser, comptime mode: Mode) !void {
+    const start = self.components.items.len;
+    if (self.consumeType()) |selector| {
+        try self.append(.{ .simple = selector });
+        if (mode.kind == .simple) return;
+    }
+
+    var after_pseudo = false;
+    while (!self.input.empty()) {
+        if (self.isToken(.colon)) {
+            const pseudo = try self.consumePseudo();
+            if (pseudo == .pseudo_element) {
+                if (mode.real) return error.InvalidSelector;
+                after_pseudo = true;
+            }
+            try self.append(pseudo);
+        } else {
+            if (after_pseudo) break;
+            const selector = try self.consumeSubclass() orelse break;
+            try self.append(.{ .simple = selector });
+        }
+        if (mode.kind == .simple) return;
+    }
+    // At least one component is required.
+    if (self.components.items.len == start) return error.InvalidSelector;
+}
+
+// https://www.w3.org/TR/selectors-4/#typedef-combinator
+pub fn consumeCombinator(self: *Parser) ?Combinator {
+    const tk = self.peekToken() orelse return null;
+    if (tk.* != .delim) return null;
+    const cb: Combinator = switch (tk.delim) {
+        '>' => .child,
+        '+' => .next_sibling,
+        '~' => .subsequent_sibling,
+        '|' => blk: {
+            if (!self.isDelimAt(1, '|')) return null;
+            self.advance();
+            break :blk .column;
+        },
+        else => return null,
+    };
+    self.advance();
+    return cb;
+}
+
+pub fn consumeType(self: *Parser) ?SimpleSelector {
+    const qual = namespace.consumeWildcardName(self.input) orelse return null;
+    if (qual.name) |name| return .{ .type_selector = .{ .namespace = qual.namespace, .name = name } };
+
+    return .{ .universal = qual.namespace };
+}
+
+pub fn consumePseudo(self: *Parser) !Component {
+    self.advance(); // colon
+    var element = self.isToken(.colon);
+    if (element) self.advance();
+    const value = self.input.consume() orelse return error.InvalidSelector;
+    const pseudo: PseudoClassSelector = switch (value.*) {
+        .preserved_token => |tk| blk: {
+            if (tk != .ident) return error.InvalidSelector;
+            // Legacy names can never be reinterpreted as pseudo-classes.
+            element = element or isLegacyPseudoElement(tk.ident);
+            break :blk .{ .name = tk.ident };
+        },
+        .function => |function| blk: {
+            if (!grammar.parseAnyValue(function.value)) return error.InvalidSelector;
+            break :blk .{ .name = function.name, .arguments = function.value };
+        },
+        else => return error.InvalidSelector,
+    };
+    if (element) return .{ .pseudo_element = .{ .name = pseudo.name, .arguments = pseudo.arguments } };
+
+    return .{ .simple = .{ .pseudo_class = pseudo } };
+}
+
+fn isLegacyPseudoElement(name: String) bool {
+    return name.eqlAscii("before") or name.eqlAscii("after") or
+        name.eqlAscii("first-line") or name.eqlAscii("first-letter");
+}
+
+// Pseudo-classes are handled with pseudo-elements by consumePseudo.
+pub fn consumeSubclass(self: *Parser) !?SimpleSelector {
+    var input = self.input;
+    const value = input.peek() orelse return null;
+    if (value.* == .simple_block) {
+        if (value.simple_block.associated_token != .left_bracket) return null;
+        const attr = try consumeAttribute(value.simple_block.value);
+        input.advance();
+        return .{ .attribute = attr };
+    }
+    const tk = self.peekToken() orelse return null;
+    switch (tk.*) {
+        .hash => |hash| {
+            if (hash.type_flag != .id) return error.InvalidSelector;
+            input.advance();
+            return .{ .id = hash.value };
+        },
+        .delim => |cp| if (cp == '.') {
+            input.advance();
+            return .{
+                .class = input.consumeIdent() orelse return error.InvalidSelector,
+            };
+        },
+        else => {},
+    }
+    return null;
+}
+
+pub fn consumeAttribute(values: []const ComponentValue) !types.AttributeSelector {
+    var input = Stream.init(values);
+    input.discardWhitespace();
+    const name = namespace.consumeQualifiedName(&input, true) orelse return error.InvalidSelector;
+    var attr = AttributeSelector{ .name = name };
+    input.discardWhitespace();
+    if (input.empty()) return attr;
+    const matcher = input.peekToken() orelse return error.InvalidSelector;
+    if (matcher.* != .delim) return error.InvalidSelector;
+
+    // Handle Matcher.
+    const matcher_value: AttributeSelector.Matcher = switch (matcher.delim) {
+        '=' => .equal,
+        '~' => .includes,
+        '|' => .dash_match,
+        '^' => .prefix,
+        '$' => .suffix,
+        '*' => .substring,
+        else => return error.InvalidSelector,
+    };
+    input.advance();
+    if (matcher.delim != '=' and !input.consumeDelim('=')) return error.InvalidSelector;
+    input.discardWhitespace();
+    const value = input.peekToken() orelse return error.InvalidSelector;
+    const text = switch (value.*) {
+        .ident => value.ident,
+        .string => value.string,
+        else => return error.InvalidSelector,
+    };
+    input.advance();
+    input.discardWhitespace();
+
+    // Handle Modifier.
+    var modifier_value: AttributeSelector.Modifier = .omitted;
+    if (input.consumeIdent()) |modifier| {
+        modifier_value = if (modifier.eqlAscii("i")) .insensitive else if (modifier.eqlAscii("s")) .sensitive else return error.InvalidSelector;
+        input.discardWhitespace();
+    }
+    if (!input.empty()) return error.InvalidSelector;
+    attr.comparison = .{ .matcher = matcher_value, .value = text, .modifier = modifier_value };
+    return attr;
+}
+
+fn peekToken(self: *const Parser) ?*const PreservedToken {
+    const value = self.input.peek() orelse return null;
+    return if (value.* == .preserved_token) &value.preserved_token else null;
+}
+
+inline fn isDelimAt(self: *const Parser, offset: usize, cp: u21) bool {
+    return self.input.isDelimAt(offset, cp);
+}
+
+inline fn advance(self: *Parser) void {
+    self.input.advance();
+}
+
+inline fn isToken(self: *const Parser, comptime tag: std.meta.Tag(PreservedToken)) bool {
+    return self.input.isToken(tag);
+}
