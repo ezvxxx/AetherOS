@@ -152,3 +152,11 @@ pub fn attribute(attributes: []const u8, wanted: []const u8) ?[]const u8 {
     }
     return null;
 }
+
+pub fn isVoid(name: []const u8) bool {
+    return std.ascii.eqlIgnoreCase(name, "area") or std.ascii.eqlIgnoreCase(name, "base") or std.ascii.eqlIgnoreCase(name, "br") or
+        std.ascii.eqlIgnoreCase(name, "col") or std.ascii.eqlIgnoreCase(name, "embed") or std.ascii.eqlIgnoreCase(name, "hr") or
+        std.ascii.eqlIgnoreCase(name, "img") or std.ascii.eqlIgnoreCase(name, "input") or std.ascii.eqlIgnoreCase(name, "link") or
+        std.ascii.eqlIgnoreCase(name, "meta") or std.ascii.eqlIgnoreCase(name, "param") or std.ascii.eqlIgnoreCase(name, "source") or
+        std.ascii.eqlIgnoreCase(name, "track") or std.ascii.eqlIgnoreCase(name, "wbr");
+}

@@ -14,6 +14,7 @@ const CachedGlyph = struct {
     codepoint: u21 = 0,
     size: u8 = 0,
     advance: u8 = 0,
+    rounded_advance: u8 = 0,
     width: u8 = 0,
     height: u8 = 0,
     alpha: [max_glyph_size * max_glyph_size]u8 = @splat(0),
@@ -173,6 +174,13 @@ pub fn drawTextItalicSized(x: u64, y: u64, text: []const u8, scale: u64, pixel_s
     } else drawText(x, y, text, scale, ink);
 }
 
+pub fn glyphAdvanceSized(codepoint: u21, pixel_size: u8, scale: u8) u16 {
+    if (face) |*active_face| {
+        if (getGlyph(active_face, codepoint, pixel_size)) |cached| return cached.rounded_advance;
+    }
+    return 6 * @as(u16, scale);
+}
+
 pub fn textWidth(text: []const u8, scale: u64) u64 {
     return textWidthSized(text, scale, @as(u8, @intCast(@min(scale, 4))) * 10);
 }
@@ -211,7 +219,7 @@ fn isContinuation(byte: u8) bool {
     return (byte & 0xc0) == 0x80;
 }
 
-fn decodeUtf8(input: []const u8) Decoded {
+pub fn decodeUtf8(input: []const u8) Decoded {
     const first = input[0];
     if (first < 0x80) return .{ .codepoint = first, .length = 1 };
     if (first >= 0xc2 and first <= 0xdf and input.len >= 2 and isContinuation(input[1])) {
@@ -257,6 +265,7 @@ fn getGlyph(active_face: *z2d.font.Font, codepoint: u21, size: u8) ?*const Cache
     const glyph_bytes = encoded.bytes[0..encoded.length];
     const advance = z2d.text.measure(allocator, active_face, glyph_bytes, options) catch return null;
     z2d.text.show(allocator, &surface, &pattern, active_face, glyph_bytes, 2, 0, options) catch return null;
+    slot.rounded_advance = @intFromFloat(@max(1, @min(max_glyph_size - 1, @round(advance))));
     slot.advance = @intCast(@max(1, @min(max_glyph_size - 1, @as(usize, @intFromFloat(@ceil(advance))))));
     for (surface.image_surface_alpha8.buf, 0..) |alpha, index| {
         slot.alpha[index] = alpha.a;
@@ -272,7 +281,7 @@ fn getGlyph(active_face: *z2d.font.Font, codepoint: u21, size: u8) ?*const Cache
 
 const Encoded = struct { bytes: [4]u8, length: usize };
 
-fn encodeUtf8(codepoint: u21) Encoded {
+pub fn encodeUtf8(codepoint: u21) Encoded {
     var result = Encoded{ .bytes = @splat(0), .length = 0 };
     if (codepoint < 0x80) {
         result.bytes[0] = @intCast(codepoint);

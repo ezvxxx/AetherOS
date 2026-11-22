@@ -83,6 +83,11 @@ fn color(raw: ?[]const u8, fallback: Color) Color {
     return fallback;
 }
 
+fn paintColor(raw: ?[]const u8, fallback: Color, current: Color) Color {
+    if (raw) |value| if (std.ascii.eqlIgnoreCase(value, "currentColor")) return current;
+    return color(raw, fallback);
+}
+
 fn rgbaPacked(c: Color, opacity: f64) u32 {
     const alpha: u8 = @intFromFloat(@min(255, @max(0, @as(f64, @floatFromInt(c.a)) * opacity)));
     return (@as(u32, c.r) << 24) | (@as(u32, c.g) << 16) | (@as(u32, c.b) << 8) | alpha;
@@ -212,6 +217,11 @@ fn readNumbers(list: []const u8, out: []Point, scale_x: f64, scale_y: f64) usize
 }
 
 pub fn rasterize(data: []const u8) ?media.Picture {
+    return rasterizeWithColor(data, 0x000000, 1);
+}
+
+pub fn rasterizeWithColor(data: []const u8, foreground: u24, css_opacity: f64) ?media.Picture {
+    const current: Color = .{ .r = @truncate(foreground >> 16), .g = @truncate(foreground >> 8), .b = @truncate(foreground), .a = 255 };
     if (data.len == 0 or data.len > 256 * 1024) return null;
     const root_start = findIgnoreCase(data, "<svg") orelse return null;
     const root_end = std.mem.indexOfScalarPos(u8, data, root_start, '>') orelse return null;
@@ -240,6 +250,11 @@ pub fn rasterize(data: []const u8) ?media.Picture {
     const picture = media.allocate(output_width, output_height) orelse return null;
     const scale_x = @as(f64, @floatFromInt(output_width)) / vb_w;
     const scale_y = @as(f64, @floatFromInt(output_height)) / vb_h;
+    const root_fill = paintColor(attr(root, "fill"), black, current);
+    const root_opacity = css_opacity * @min(1, @max(0, number(attr(root, "opacity"), 1)));
+    const Path = struct { id: []const u8, data: []const u8, fill: u32, stroke: u32, width: f64 };
+    var paths: [32]Path = undefined;
+    var path_count: usize = 0;
     var cursor = root_end + 1;
     while (cursor < data.len) {
         const open = std.mem.indexOfScalarPos(u8, data, cursor, '<') orelse break;
@@ -250,9 +265,9 @@ pub fn rasterize(data: []const u8) ?media.Picture {
         var name_end: usize = 0;
         while (name_end < tag.len and !space(tag[name_end]) and tag[name_end] != '/') : (name_end += 1) {}
         const name = tag[0..name_end];
-        const opacity = @min(1, @max(0, number(attr(tag, "opacity"), number(styleValue(tag, "opacity"), 1))));
-        const fill_color = color(attr(tag, "fill") orelse styleValue(tag, "fill"), black);
-        const stroke_color = color(attr(tag, "stroke") orelse styleValue(tag, "stroke"), .{ .r = 0, .g = 0, .b = 0, .a = 0 });
+        const opacity = root_opacity * @min(1, @max(0, number(attr(tag, "opacity"), number(styleValue(tag, "opacity"), 1))));
+        const fill_color = paintColor(attr(tag, "fill") orelse styleValue(tag, "fill"), root_fill, current);
+        const stroke_color = paintColor(attr(tag, "stroke") orelse styleValue(tag, "stroke"), .{ .r = 0, .g = 0, .b = 0, .a = 0 }, current);
         const fill_px = rgbaPacked(fill_color, opacity);
         const stroke_px = rgbaPacked(stroke_color, opacity);
         const stroke_w = @max(1, number(attr(tag, "stroke-width") orelse styleValue(tag, "stroke-width"), 1) * @min(scale_x, scale_y));
@@ -297,7 +312,22 @@ pub fn rasterize(data: []const u8) ?media.Picture {
             }
             polygon(picture, points[0..count], fill_px, stroke_px, stroke_w, std.ascii.eqlIgnoreCase(name, "polygon"));
         } else if (std.ascii.eqlIgnoreCase(name, "path")) {
-            renderPath(picture, attr(tag, "d") orelse "", fill_px, stroke_px, stroke_w, vb_x, vb_y, scale_x, scale_y);
+            const d = attr(tag, "d") orelse continue;
+            renderPath(picture, d, fill_px, stroke_px, stroke_w, vb_x, vb_y, scale_x, scale_y);
+            if (path_count < paths.len) {
+                if (attr(tag, "id")) |id| {
+                    paths[path_count] = .{ .id = id, .data = d, .fill = fill_px, .stroke = stroke_px, .width = stroke_w };
+                    path_count += 1;
+                }
+            }
+        } else if (std.ascii.eqlIgnoreCase(name, "use")) {
+            const href = attr(tag, "href") orelse continue;
+            if (href.len < 2 or href[0] != '#') continue;
+            for (paths[0..path_count]) |path| {
+                if (!std.mem.eql(u8, href[1..], path.id)) continue;
+                renderPath(picture, path.data, path.fill, path.stroke, path.width, vb_x - number(attr(tag, "x"), 0), vb_y - number(attr(tag, "y"), 0), scale_x, scale_y);
+                break;
+            }
         }
     }
     return picture;
@@ -336,6 +366,28 @@ fn renderPath(picture: media.Picture, d: []const u8, fill: u32, stroke: u32, str
         }
         const relative = command >= 'a' and command <= 'z';
         const upper = std.ascii.toUpper(command);
+        if (upper == 'Q') {
+            const cx = readPathNumber(d, &i) orelse break;
+            const cy = readPathNumber(d, &i) orelse break;
+            const end_x = readPathNumber(d, &i) orelse break;
+            const end_y = readPathNumber(d, &i) orelse break;
+            const control_x = if (relative) x + cx else cx;
+            const control_y = if (relative) y + cy else cy;
+            const nx = if (relative) x + end_x else end_x;
+            const ny = if (relative) y + end_y else end_y;
+            for (1..9) |step| {
+                if (count == points.len) break;
+                const t = @as(f64, @floatFromInt(step)) / 8;
+                const u = 1 - t;
+                const sample_x = u * u * x + 2 * u * t * control_x + t * t * nx;
+                const sample_y = u * u * y + 2 * u * t * control_y + t * t * ny;
+                points[count] = pathPoint(sample_x, sample_y, vb_x, vb_y, sx, sy);
+                count += 1;
+            }
+            x = nx;
+            y = ny;
+            continue;
+        }
         if (upper != 'M' and upper != 'L' and upper != 'H' and upper != 'V') break;
         const x0 = readPathNumber(d, &i) orelse break;
         var y0 = y;
@@ -352,7 +404,7 @@ fn renderPath(picture: media.Picture, d: []const u8, fill: u32, stroke: u32, str
             polygon(picture, points[0..count], fill, stroke, stroke_width, false);
             count = 0;
         }
-        points[count] = .{ .x = (x - vb_x) * sx, .y = (y - vb_y) * sy };
+        points[count] = pathPoint(x, y, vb_x, vb_y, sx, sy);
         count += 1;
         if (upper == 'M') {
             start = .{ .x = x, .y = y };
@@ -360,6 +412,10 @@ fn renderPath(picture: media.Picture, d: []const u8, fill: u32, stroke: u32, str
         }
     }
     if (count >= 2) polygon(picture, points[0..count], fill, stroke, stroke_width, closed);
+}
+
+fn pathPoint(x: f64, y: f64, vb_x: f64, vb_y: f64, sx: f64, sy: f64) Point {
+    return .{ .x = @min(8192, @max(-8192, (x - vb_x) * sx)), .y = @min(8192, @max(-8192, (y - vb_y) * sy)) };
 }
 
 fn readPathNumber(data: []const u8, cursor: *usize) ?f64 {

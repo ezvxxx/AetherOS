@@ -12,12 +12,15 @@ pub const Patch = struct {
     hidden: ?bool = null,
     block: ?bool = null,
     margin: ?Box = null,
+    negative_top_margin: ?u16 = null,
     padding: ?Box = null,
     text_align: ?Align = null,
     line_height: ?u8 = null,
     max_width: ?u16 = null,
     margin_auto: ?bool = null,
     font_scale: ?u8 = null,
+    relative_font_percent: ?u8 = null,
+    opacity: ?u8 = null,
     width: ?u16 = null,
     height: ?u16 = null,
     width_percent: ?u8 = null,
@@ -61,6 +64,7 @@ pub const Computed = struct {
     hidden: bool = false,
     block: ?bool = null,
     margin: Box = .{},
+    negative_top_margin: u16 = 0,
     padding: Box = .{},
     text_align: Align = .left,
     container_background: ?u24 = null,
@@ -68,6 +72,8 @@ pub const Computed = struct {
     max_width: ?u16 = null,
     margin_auto: bool = false,
     font_scale: u8 = 1,
+    font_pixels: u8 = 0,
+    opacity: u8 = 255,
     width: ?u16 = null,
     height: ?u16 = null,
     width_percent: ?u8 = null,
@@ -96,6 +102,8 @@ pub const Computed = struct {
 
 const AdvancedScores = struct {
     text_transform: ?u16 = null,
+    opacity: ?u16 = null,
+    negative_top_margin: ?u16 = null,
     white_space_nowrap: ?u16 = null,
     letter_spacing: ?u16 = null,
     word_spacing: ?u16 = null,
@@ -161,7 +169,7 @@ pub const Sheet = struct {
         }
     }
 
-    pub fn compute(self: *const Sheet, parent: Computed, tag: []const u8, id: []const u8, classes: []const u8, inline_style: []const u8, viewport_height: u16) Computed {
+    pub fn compute(self: *const Sheet, parent: Computed, tag: []const u8, id: []const u8, classes: []const u8, previous_tag: []const u8, inline_style: []const u8, viewport_height: u16) Computed {
         var result = Computed{
             .color = parent.color,
             .container_background = parent.container_background,
@@ -171,13 +179,15 @@ pub const Sheet = struct {
             .hidden = false,
             .text_align = parent.text_align,
             .font_scale = parent.font_scale,
+            .font_pixels = parent.font_pixels,
+            .opacity = parent.opacity,
             .line_height = parent.line_height,
             .text_transform = parent.text_transform,
             .white_space_nowrap = parent.white_space_nowrap,
             .letter_spacing = parent.letter_spacing,
             .word_spacing = parent.word_spacing,
             .italic = parent.italic,
-            .margin = if (std.ascii.eqlIgnoreCase(tag, "p")) .{ .top = 16, .bottom = 16 } else .{},
+            .margin = if (std.ascii.eqlIgnoreCase(tag, "p")) .{ .top = 16, .bottom = 0 } else .{},
         };
         var advanced_scores = AdvancedScores{};
         var color_score: u16 = 0;
@@ -219,7 +229,7 @@ pub const Sheet = struct {
 
         for (self.rules[0..self.count]) |rule| {
             const selector = rule.selector[0..rule.selector_len];
-            if (!matches(selector, tag, id, classes)) continue;
+            if (!matchesElement(selector, tag, id, classes, previous_tag)) continue;
             const score = rule.specificity;
             if (rule.patch.color) |value| if (!has_color or score >= color_score) {
                 result.color = value;
@@ -283,6 +293,7 @@ pub const Sheet = struct {
             };
             if (rule.patch.font_scale) |value| if (!has_font_scale or score >= font_scale_score) {
                 result.font_scale = value;
+                result.font_pixels = 0;
                 font_scale_score = score;
                 has_font_scale = true;
             };
@@ -330,6 +341,14 @@ pub const Sheet = struct {
                 background_image_score = score;
                 has_background_image = true;
             };
+            if (rule.patch.relative_font_percent) |percent| if (!has_font_scale or score >= font_scale_score) {
+                result.font_pixels = relativeFontPixels(parent, percent);
+                if (!has_line_height) result.line_height = scaleLineHeight(parent.line_height, percent);
+                font_scale_score = score;
+                has_font_scale = true;
+            };
+            cascadeAdvanced(u16, &result.negative_top_margin, rule.patch.negative_top_margin, score, &advanced_scores.negative_top_margin);
+            cascadeAdvanced(u8, &result.opacity, rule.patch.opacity, score, &advanced_scores.opacity);
             cascadeAdvanced(TextTransform, &result.text_transform, rule.patch.text_transform, score, &advanced_scores.text_transform);
             cascadeAdvanced(bool, &result.white_space_nowrap, rule.patch.white_space_nowrap, score, &advanced_scores.white_space_nowrap);
             cascadeAdvanced(i8, &result.letter_spacing, rule.patch.letter_spacing, score, &advanced_scores.letter_spacing);
@@ -356,12 +375,21 @@ pub const Sheet = struct {
         if (inline_patch.hidden) |value| result.hidden = value;
         if (inline_patch.block) |value| result.block = value;
         if (inline_patch.margin) |value| result.margin = value;
+        if (inline_patch.negative_top_margin) |value| result.negative_top_margin = value;
         if (inline_patch.padding) |value| result.padding = value;
         if (inline_patch.text_align) |value| result.text_align = value;
         if (inline_patch.line_height) |value| result.line_height = value;
         if (inline_patch.max_width) |value| result.max_width = value;
         if (inline_patch.margin_auto) |value| result.margin_auto = value;
-        if (inline_patch.font_scale) |value| result.font_scale = value;
+        if (inline_patch.font_scale) |value| {
+            result.font_scale = value;
+            result.font_pixels = 0;
+        }
+        if (inline_patch.relative_font_percent) |percent| {
+            result.font_pixels = relativeFontPixels(parent, percent);
+            if (!has_line_height and inline_patch.line_height == null) result.line_height = scaleLineHeight(parent.line_height, percent);
+        }
+        if (inline_patch.opacity) |opacity| result.opacity = opacity;
         if (inline_patch.width) |value| result.width = value;
         if (inline_patch.height) |value| result.height = value;
         if (inline_patch.width_percent) |value| result.width_percent = value;
@@ -389,6 +417,21 @@ pub const Sheet = struct {
         return result;
     }
 };
+
+fn scaleLineHeight(line_height: u8, percent: u8) u8 {
+    return @intCast(@max(10, @min(255, (@as(u16, line_height) * percent + 50) / 100)));
+}
+
+fn relativeFontPixels(parent: Computed, percent: u8) u8 {
+    const size = if (parent.font_pixels != 0) parent.font_pixels else if (parent.font_scale <= 1) @as(u8, 10) else parent.font_scale * 8;
+    return @intCast(@max(6, @min(32, (@as(u16, size) * percent + 50) / 100)));
+}
+
+fn parseOpacity(value: []const u8) ?u8 {
+    const number = std.fmt.parseFloat(f64, value) catch return null;
+    if (!std.math.isFinite(number)) return null;
+    return @intFromFloat(@min(1, @max(0, number)) * 255 + 0.5);
+}
 
 fn parseDeclarations(input: []const u8, viewport_height: u16, dark: bool) Patch {
     var result = Patch{};
@@ -478,7 +521,18 @@ fn parseDeclarations(input: []const u8, viewport_height: u16, dark: bool) Patch 
                 result.font_scale = parseFontScale(value[0..size_end]) orelse result.font_scale;
                 if (std.mem.indexOfScalar(u8, value, '/')) |slash| result.line_height = parseLineHeight(value[slash + 1 ..]) orelse result.line_height;
             } else if (std.ascii.eqlIgnoreCase(name, "font-size")) {
-                result.font_scale = parseFontScale(value) orelse result.font_scale;
+                if (std.ascii.endsWithIgnoreCase(value, "em") and !std.ascii.endsWithIgnoreCase(value, "rem")) {
+                    const number = std.fmt.parseFloat(f64, value[0 .. value.len - 2]) catch 0;
+                    if (std.math.isFinite(number) and number > 0) {
+                        result.relative_font_percent = @intFromFloat(@min(255, number * 100 + 0.5));
+                        result.font_scale = null;
+                    }
+                } else if (parseFontScale(value)) |scale| {
+                    result.font_scale = scale;
+                    result.relative_font_percent = null;
+                }
+            } else if (std.ascii.eqlIgnoreCase(name, "opacity")) {
+                result.opacity = parseOpacity(value) orelse result.opacity;
             } else if (std.ascii.eqlIgnoreCase(name, "width")) {
                 if (std.ascii.endsWithIgnoreCase(value, "%")) {
                     result.width_percent = parsePercent(value) orelse result.width_percent;
@@ -557,7 +611,14 @@ fn parseDeclarations(input: []const u8, viewport_height: u16, dark: bool) Patch 
             } else if (std.ascii.eqlIgnoreCase(name, "max-width")) {
                 result.max_width = parseLength(value, viewport_height) orelse result.max_width;
             } else if (std.ascii.eqlIgnoreCase(name, "margin")) {
-                if (std.ascii.eqlIgnoreCase(value, "auto")) result.margin_auto = true else result.margin = parseBox(value, viewport_height) orelse result.margin;
+                var terms = std.mem.tokenizeAny(u8, value, " \t\r\n");
+                const top = terms.next() orelse "";
+                const side = terms.next() orelse top;
+                if (top.len > 1 and top[0] == '-') {
+                    result.negative_top_margin = parseLength(top[1..], viewport_height) orelse 0;
+                } else result.negative_top_margin = 0;
+                if (std.ascii.eqlIgnoreCase(side, "auto")) result.margin_auto = true;
+                result.margin = parseBox(value, viewport_height) orelse result.margin;
             } else if (std.ascii.eqlIgnoreCase(name, "padding")) {
                 result.padding = parseBox(value, viewport_height) orelse result.padding;
             } else if (oneOfIgnoreCase(name, &.{ "margin-inline-start", "margin-inline-end", "margin-block-start", "margin-block-end" })) {
@@ -602,6 +663,11 @@ fn parseLength(raw: []const u8, viewport_height: u16) ?u16 {
     } else if (std.ascii.endsWithIgnoreCase(value, "pt")) {
         end -= 2;
         multiplier = 1;
+    }
+    if (std.mem.indexOfScalar(u8, value[0..end], '.') != null) {
+        const decimal = std.fmt.parseFloat(f64, value[0..end]) catch return null;
+        if (!std.math.isFinite(decimal) or decimal < 0) return null;
+        return @intFromFloat(@min(4096, @round(decimal * @as(f64, @floatFromInt(multiplier)))));
     }
     const number = std.fmt.parseInt(u16, value[0..end], 10) catch return null;
     if (number >= 4096 or number > 4096 / multiplier) return 4096;
@@ -724,6 +790,14 @@ fn selectorSpecificity(selector: []const u8) u16 {
         i += 1;
     }
     return score;
+}
+
+fn matchesElement(selector: []const u8, tag: []const u8, id: []const u8, classes: []const u8, previous_tag: []const u8) bool {
+    if (std.mem.indexOfScalar(u8, selector, '+')) |plus| {
+        const earlier = std.mem.trim(u8, selector[0..plus], " \t\r\n");
+        return earlier.len != 0 and std.ascii.eqlIgnoreCase(earlier, previous_tag) and matches(selector[plus + 1 ..], tag, id, classes);
+    }
+    return matches(selector, tag, id, classes);
 }
 
 fn matches(selector: []const u8, tag: []const u8, id: []const u8, classes: []const u8) bool {

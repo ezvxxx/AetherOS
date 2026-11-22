@@ -57,6 +57,7 @@ const Meta = struct {
     plain: bool = false,
     compressed: bool = false,
     content_type_seen: bool = false,
+    javascript: bool = false,
     attachment: bool = false,
     filename: [96]u8 = @splat(0),
     filename_len: usize = 0,
@@ -401,6 +402,9 @@ fn parseMeta(bytes: []const u8) ?Meta {
             meta.content_type_seen = true;
             meta.html = startsIgnoreCase(value, "text/html") or startsIgnoreCase(value, "application/xhtml+xml");
             meta.plain = startsIgnoreCase(value, "text/plain");
+            const end = std.mem.indexOfScalar(u8, value, ';') orelse value.len;
+            const mime = std.mem.trim(u8, value[0..end], " \t");
+            meta.javascript = equalIgnoreCase(mime, "text/javascript") or equalIgnoreCase(mime, "application/javascript");
         } else if (equalIgnoreCase(name, "content-disposition")) {
             meta.attachment = startsIgnoreCase(value, "attachment");
             if (indexOfIgnoreCase(value, "filename=")) |filename_at| {
@@ -721,22 +725,28 @@ fn loadOnce(url: *Url) bool {
     }
     const width = if (isActive()) s.windows[@intCast(s.active_window)].w else @min(860, s.fb.width -| 24);
     const columns: usize = @intCast(@max(1, (width -| 36) / 6));
+    var inserted: usize = 0;
     if (meta.plain) {
         web_engine.renderPlain(body_buffer[0..body_len], columns);
     } else {
         const height = if (isActive()) s.windows[@intCast(s.active_window)].h else s.fb.height;
-        web_engine.renderHtml(body_buffer[0..body_len], columns, @intCast(@min(height -| 126, 65535)), s.dark_theme, .{
+        inserted = web_engine.renderHtml(body_buffer[0..body_len], columns, @intCast(@min(height -| 126, 65535)), s.dark_theme, .{
             .resolve = resolvePageLink,
             .stylesheet = fetchPageStylesheet,
+            .script = fetchPageScript,
             .image = fetchPageImage,
         });
     }
     panic_report.trace("browser: response body rendered");
-    setMessage(if (partial) "Page is truncated; rendering supported HTML, CSS and media." else "Page rendered. JavaScript is disabled.");
+    setMessage(if (partial) "Page is truncated; rendering supported HTML, CSS and media." else if (inserted != 0) "Page rendered with script content." else "Page rendered.");
     return false;
 }
 
 fn fetchResource(url_text: []const u8) ?[]const u8 {
+    return fetchResourceOfType(url_text, false);
+}
+
+fn fetchResourceOfType(url_text: []const u8, script: bool) ?[]const u8 {
     const url = parseUrl(url_text) orelse return null;
     if (!dns.start(url.host[0..url.host_len])) return null;
     const dns_deadline = s.uptime() + 1200;
@@ -770,6 +780,7 @@ fn fetchResource(url_text: []const u8) ?[]const u8 {
     if (response_len == 0) return null;
     const meta = parseMeta(response[0..response_len]) orelse return null;
     if (meta.status < 200 or meta.status >= 300 or meta.compressed or meta.body_start > response_len) return null;
+    if (script and !meta.javascript) return null;
     const raw_body = response[meta.body_start..response_len];
     var body_len: usize = 0;
     if (meta.chunked) {
@@ -1143,6 +1154,16 @@ fn resolvePageLink(href: []const u8, out: *[max_url]u8) ?usize {
     return resolveLink(base, href, out);
 }
 
+fn fetchPageScript(src: []const u8) ?[]const u8 {
+    const base = parseUrl(address[0..address_len]) orelse return null;
+    var url: [max_url]u8 = undefined;
+    const length = resolveLink(base, src, &url) orelse return null;
+    const target = parseUrl(url[0..length]) orelse return null;
+    if (target.secure != base.secure or target.port != base.port or
+        !equalIgnoreCase(target.host[0..target.host_len], base.host[0..base.host_len])) return null;
+    return fetchResourceOfType(url[0..length], true);
+}
+
 fn fetchPageStylesheet(href: []const u8) ?[]const u8 {
     var url: [max_url]u8 = undefined;
     const length = resolvePageLink(href, &url) orelse return null;
@@ -1234,7 +1255,7 @@ pub fn draw(win: s.Window) void {
     if (!web_engine.hasPage()) {
         font.drawText(content_x, content_y, "AetherOS Browser", 1, accent);
         font.drawText(content_x, content_y + 24, "Graphical HTML, CSS, images and SVG rendering.", 1, fg);
-        font.drawText(content_x, content_y + 44, "JavaScript is disabled.", 1, muted);
+        font.drawText(content_x, content_y + 44, "Limited script support.", 1, muted);
         font.drawText(content_x, content_y + 70, "Enter an address or search query above.", 1, muted);
         return;
     }

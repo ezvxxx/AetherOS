@@ -62,7 +62,7 @@ $(BUILD)/h264_%.o: third_party/tinyh264/native/%.c | $(BUILD)
 	$(ZIG) build-obj $< -target x86_64-freestanding-none -O ReleaseFast -fno-builtin \
 		-Ithird_party/tinyh264/port -Ithird_party/tinyh264/native -femit-bin=$@
 
-$(KERNEL): kernel.zig assets/aetheros-logo.png $(ZIG_SOURCES) $(INTERRUPT_OBJECT) $(MP3_OBJECT) $(H264_OBJECTS)
+$(KERNEL): kernel.zig assets/aetheros-logo.png assets/fonts/AetherWebFallback.bin $(ZIG_SOURCES) $(INTERRUPT_OBJECT) $(MP3_OBJECT) $(H264_OBJECTS)
 	$(ZIG) build-exe $(INTERRUPT_OBJECT) $(MP3_OBJECT) $(H264_OBJECTS) \
 		-target x86_64-freestanding-none -mcmodel=kernel -mno-red-zone \
 		-O ReleaseFast -fstrip -fentry=_start -Tlinker.ld -femit-bin=$(KERNEL) \

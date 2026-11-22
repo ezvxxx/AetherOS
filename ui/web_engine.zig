@@ -6,16 +6,21 @@ const media = @import("../graphics/media.zig");
 const svg = @import("../graphics/svg.zig");
 const css = @import("css.zig");
 const html = @import("html.zig");
+const dom = @import("dom_fragments.zig");
+const fallback = @import("../graphics/web_glyphs.zig");
+const arabic = @import("../graphics/arabic_forms.zig");
 const equalIgnoreCase = std.ascii.eqlIgnoreCase;
 
 pub const max_url = 320;
 const max_page = 16384;
+const image_marker: u21 = 0x11_0000;
 const max_inline_images = 16;
 const max_block_boxes = 256;
 const max_links = 48;
 
 pub const Resources = struct {
     resolve: *const fn ([]const u8, *[max_url]u8) ?usize,
+    script: *const fn ([]const u8) ?[]const u8,
     stylesheet: *const fn ([]const u8) ?[]const u8,
     image: *const fn ([]const u8) ?media.Picture,
 };
@@ -27,15 +32,19 @@ const BlockBox = struct {
     image_id: ?u8 = null,
 };
 
-var page: [max_page]u8 = @splat(0);
+var page: [max_page]u21 = @splat(0);
 var page_colors: [max_page]u24 = @splat(0);
 var page_backgrounds: [max_page]u24 = @splat(0);
 var page_style_flags: [max_page]u8 = @splat(0);
 var page_decorations: [max_page]u8 = @splat(0);
 var page_advances: [max_page]u16 = undefined;
 var line_width: usize = 0;
+var page_rtl: [max_page]bool = undefined;
+var right_to_left = false;
 var page_line_heights: [max_page]u8 = @splat(10);
 var page_font_scales: [max_page]u8 = @splat(1);
+var page_font_pixels: [max_page]u8 = undefined;
+var page_opacities: [max_page]u8 = undefined;
 var page_align_starts: [max_page]u16 = @splat(0);
 var page_align_widths: [max_page]u16 = @splat(0);
 var page_background_color: ?u24 = null;
@@ -83,6 +92,7 @@ pub fn clear() void {
     page_len = 0;
     page_lines = 0;
     line_width = 0;
+    right_to_left = false;
     page_scroll = 0;
     link_count = 0;
     active_link = 0;
@@ -96,14 +106,17 @@ pub fn hasPage() bool {
     return page_len != 0;
 }
 
-fn appendPage(ch: u8) void {
+fn appendPage(ch: u21) void {
     if (page_len >= page.len) return;
     page[page_len] = ch;
+    page_rtl[page_len] = right_to_left;
     page_link_ids[page_len] = active_link;
     page_colors[page_len] = rendering_style.color orelse 0;
     page_backgrounds[page_len] = rendering_style.background orelse 0;
     page_line_heights[page_len] = rendering_style.line_height;
     page_font_scales[page_len] = rendering_style.font_scale;
+    page_font_pixels[page_len] = fontSize(rendering_style);
+    page_opacities[page_len] = rendering_style.opacity;
     page_align_starts[page_len] = @intCast(@min(flow_align_start, std.math.maxInt(u16)));
     page_align_widths[page_len] = @intCast(@min(flow_align_width, std.math.maxInt(u16)));
     page_style_flags[page_len] = (if (rendering_style.color != null) @as(u8, 1) else 0) |
@@ -114,7 +127,7 @@ fn appendPage(ch: u8) void {
         (if (rendering_style.white_space_nowrap) @as(u8, 64) else 0) |
         (if (rendering_style.italic) @as(u8, 128) else 0);
     page_decorations[page_len] = (if (rendering_style.line_through) @as(u8, 1) else 0) | (if (rendering_style.overline) @as(u8, 2) else 0);
-    const advance = if (ch == '\n' or ch == 0xff) 0 else glyphAdvance(ch, rendering_style);
+    const advance = if (ch == '\n' or ch == image_marker) 0 else glyphAdvance(ch, rendering_style);
     page_advances[page_len] = advance;
     line_width += advance;
     page_len += 1;
@@ -128,32 +141,38 @@ fn newline() void {
     if (page_len != 0 and page[page_len - 1] != '\n') appendPage('\n');
 }
 
-fn fontSize(scale: u8) u8 {
+fn fontSize(style: css.Computed) u8 {
+    if (style.font_pixels != 0) return style.font_pixels;
+    const scale = style.font_scale;
     return if (scale <= 1) 10 else @as(u8, @min(scale, 4)) * 8;
 }
 
-fn glyphAdvance(ch: u8, style: css.Computed) u16 {
-    const measured: i32 = @intCast(font.textWidthSized(&.{ch}, @max(1, style.font_scale), fontSize(style.font_scale)));
+fn glyphAdvance(ch: u21, style: css.Computed) u16 {
+    const size = fontSize(style);
+    const measured: i32 = if (fallback.find(ch)) |entry|
+        fallback.advance(entry, size)
+    else
+        font.glyphAdvanceSized(ch, size, @max(1, style.font_scale));
     const spacing = @as(i32, style.letter_spacing) + if (ch == ' ') @as(i32, style.word_spacing) else 0;
     return @intCast(@max(1, measured + spacing));
 }
 
-fn appendVisible(ch: u8, previous_space: *bool) void {
-    if (std.ascii.isWhitespace(ch)) {
+fn appendVisible(ch: u21, previous_space: *bool) void {
+    if (ch < 128 and std.ascii.isWhitespace(@intCast(ch))) {
         if (line_width != 0 and !previous_space.*) appendPage(' ');
         previous_space.* = true;
         return;
     }
     var displayed = ch;
     if (ch < 0x80) switch (flow_style.text_transform) {
-        .uppercase => displayed = std.ascii.toUpper(ch),
-        .lowercase => displayed = std.ascii.toLower(ch),
+        .uppercase => displayed = std.ascii.toUpper(@intCast(ch)),
+        .lowercase => displayed = std.ascii.toLower(@intCast(ch)),
         .capitalize => if (previous_space.*) {
-            displayed = std.ascii.toUpper(ch);
+            displayed = std.ascii.toUpper(@intCast(ch));
         },
         .none => {},
     };
-    const glyph = if (displayed < 0x80) displayed else '?';
+    const glyph = displayed;
     if (!flow_style.white_space_nowrap and line_width != 0 and line_width + glyphAdvance(glyph, rendering_style) > flow_align_width) newline();
     appendPage(glyph);
     previous_space.* = false;
@@ -289,7 +308,11 @@ pub fn renderPlain(input: []const u8, columns: usize) void {
     flow_align_width = columns * 6;
     page_lines = 1;
     var previous_space = true;
-    for (input) |ch| {
+    var offset: usize = 0;
+    while (offset < input.len) {
+        const decoded = font.decodeUtf8(input[offset..]);
+        const ch = decoded.codepoint;
+        offset += decoded.length;
         if (ch == '\n') {
             newline();
             previous_space = true;
@@ -337,6 +360,22 @@ fn verticalGap(pixels: u16) void {
     }
 }
 
+fn reduceVerticalGap(pixels: u16) void {
+    var remaining = pixels;
+    while (remaining != 0 and page_len != 0) {
+        const index = page_len - 1;
+        if (page[index] != '\n' or (index != 0 and page[index - 1] != '\n')) return;
+        const gap = page_line_heights[index];
+        if (gap > remaining) {
+            page_line_heights[index] = @intCast(gap - remaining);
+            return;
+        }
+        remaining -= gap;
+        page_len -= 1;
+        page_lines -= 1;
+    }
+}
+
 const FlowBox = struct {
     left: usize = 0,
     width: usize = 0,
@@ -370,15 +409,9 @@ fn updateTextFlow(style: css.Computed, columns: usize) void {
     flow_align_width = @max(1, end -| flow_align_start);
 }
 
-fn isVoidElement(name: []const u8) bool {
-    return equalIgnoreCase(name, "area") or equalIgnoreCase(name, "base") or equalIgnoreCase(name, "br") or
-        equalIgnoreCase(name, "col") or equalIgnoreCase(name, "embed") or equalIgnoreCase(name, "hr") or
-        equalIgnoreCase(name, "img") or equalIgnoreCase(name, "input") or equalIgnoreCase(name, "link") or
-        equalIgnoreCase(name, "meta") or equalIgnoreCase(name, "param") or equalIgnoreCase(name, "source") or
-        equalIgnoreCase(name, "track") or equalIgnoreCase(name, "wbr");
-}
-
-pub fn renderHtml(input: []const u8, columns: usize, viewport_height: u16, dark: bool, resources: Resources) void {
+pub fn renderHtml(source: []const u8, columns: usize, viewport_height: u16, dark: bool, resources: Resources) usize {
+    const expansion = dom.apply(source, resources.script);
+    const input = expansion.markup;
     clear();
     rendering_style = .{};
     flow_style = .{};
@@ -393,11 +426,13 @@ pub fn renderHtml(input: []const u8, columns: usize, viewport_height: u16, dark:
         name: []const u8 = "",
         parent_link: u8 = 0,
         parent_box: FlowBox = .{},
+        parent_rtl: bool = false,
         parent: css.Computed = .{},
         box_index: ?usize = null,
     };
     var style_stack: [32]StyleFrame = @splat(.{});
     var style_stack_len: usize = 0;
+    var previous_tags: [33][]const u8 = @splat("");
     var active_style: css.Computed = .{};
     var tokens: html.Tokenizer = .{ .input = input };
     var list_item_counter: u16 = 0;
@@ -410,15 +445,7 @@ pub fn renderHtml(input: []const u8, columns: usize, viewport_height: u16, dark:
             const tag = element.attributes;
             const name = element.name;
             const closing = element.closing;
-            const void_element = isVoidElement(name) or element.self_closing;
-            if (!closing and equalIgnoreCase(name, "svg")) {
-                if (!void_element) tokens.skipElement(name);
-                if (svg.rasterize(input[element.start..tokens.pos])) |picture| {
-                    addImage(tag, .{}, picture, columns);
-                }
-                previous_space = true;
-                continue;
-            }
+            const void_element = html.isVoid(name) or element.self_closing;
             if (!closing and equalIgnoreCase(name, "head")) continue;
             if (!closing and (equalIgnoreCase(name, "script") or equalIgnoreCase(name, "style") or equalIgnoreCase(name, "title"))) {
                 _ = tokens.rawText(name);
@@ -455,6 +482,7 @@ pub fn renderHtml(input: []const u8, columns: usize, viewport_height: u16, dark:
                     frame_index -= 1;
                     active_style = style_stack[frame_index].parent;
                     content_box = style_stack[frame_index].parent_box;
+                    right_to_left = style_stack[frame_index].parent_rtl;
                     style_stack_len = frame_index;
                     if (style_stack[frame_index].box_index) |index| block_boxes[index].end_line = page_lines;
                     active_link = style_stack[frame_index].parent_link;
@@ -471,9 +499,12 @@ pub fn renderHtml(input: []const u8, columns: usize, viewport_height: u16, dark:
                 name,
                 html.attribute(tag, "id") orelse "",
                 html.attribute(tag, "class") orelse "",
+                previous_tags[style_stack_len],
                 html.attribute(tag, "style") orelse "",
                 viewport_height,
             );
+            const previous_tag = previous_tags[style_stack_len];
+            previous_tags[style_stack_len] = name;
             if (element_style.hidden) {
                 if (!void_element) {
                     if (html.isRawText(name)) {
@@ -482,9 +513,23 @@ pub fn renderHtml(input: []const u8, columns: usize, viewport_height: u16, dark:
                 }
                 continue;
             }
+            if (equalIgnoreCase(name, "svg")) {
+                if (!void_element) tokens.skipElement(name);
+                const color = element_style.color orelse if (dark) @as(u24, 0xebebeb) else 0x202020;
+                const opacity = @as(f64, @floatFromInt(element_style.opacity)) / 255;
+                if (svg.rasterizeWithColor(input[element.start..tokens.pos], color, opacity)) |picture| {
+                    reduceVerticalGap(element_style.negative_top_margin);
+                    rendering_style = element_style;
+                    addImage(tag, element_style, picture, columns);
+                    rendering_style = active_style;
+                }
+                previous_space = true;
+                continue;
+            }
+            if (equalIgnoreCase(name, "a") and equalIgnoreCase(previous_tag, "p") and line_width == 0) verticalGap(16);
             if (equalIgnoreCase(name, "iframe") or equalIgnoreCase(name, "video") or equalIgnoreCase(name, "audio")) {
-                const fallback = if (equalIgnoreCase(name, "iframe")) "[Embedded frame]" else if (equalIgnoreCase(name, "video")) "[Video player]" else "[Audio player]";
-                for (fallback) |ch| appendVisible(ch, &previous_space);
+                const label = if (equalIgnoreCase(name, "iframe")) "[Embedded frame]" else if (equalIgnoreCase(name, "video")) "[Video player]" else "[Audio player]";
+                for (label) |ch| appendVisible(ch, &previous_space);
                 if (!void_element) {
                     if (equalIgnoreCase(name, "iframe")) {
                         _ = tokens.rawText(name);
@@ -576,12 +621,17 @@ pub fn renderHtml(input: []const u8, columns: usize, viewport_height: u16, dark:
             const pushed_style = !void_element and style_stack_len < style_stack.len;
             if (pushed_style) {
                 const box_index: ?usize = if (block_layout and block_box_count < block_boxes.len and (element_style.background != null or element_style.background_image != null or element_style.border_width != 0 or element_style.border_top_width != 0 or element_style.min_height != 0 or element_style.height != null)) block_box_count else null;
-                style_stack[style_stack_len] = .{ .parent = active_style, .name = name, .parent_link = active_link, .parent_box = content_box, .box_index = box_index };
+                style_stack[style_stack_len] = .{ .parent = active_style, .name = name, .parent_link = active_link, .parent_box = content_box, .parent_rtl = right_to_left, .box_index = box_index };
                 style_stack_len += 1;
+                previous_tags[style_stack_len] = "";
                 if (box_index != null) block_box_count += 1;
             }
             active_style = if (pushed_style) element_style else parent_style;
             if (pushed_style) {
+                if (html.attribute(tag, "dir")) |dir| {
+                    if (equalIgnoreCase(dir, "rtl")) right_to_left = true;
+                    if (equalIgnoreCase(dir, "ltr")) right_to_left = false;
+                }
                 if (block_layout) updateFlow(active_style, content_box, columns) else updateTextFlow(active_style, columns);
             }
             rendering_style = element_style;
@@ -668,6 +718,7 @@ pub fn renderHtml(input: []const u8, columns: usize, viewport_height: u16, dark:
     for (page[0..page_len]) |ch| if (ch == '\n') {
         page_lines += 1;
     };
+    return expansion.applied;
 }
 
 fn cssColor(value: u24) u32 {
@@ -766,15 +817,29 @@ fn drawBlockBoxes(content_x: u64, content_y: u64, content_w: u64, content_h: u64
     }
 }
 
-fn drawStyledLine(x: u64, y: u64, start: usize, text: []const u8, normal_ink: u32, link_ink: u32, width: u64, row_height: u8) void {
+fn mixColor(foreground: u24, background: u24, opacity: u8) u24 {
+    if (opacity == 255) return foreground;
+    var result: u24 = 0;
+    for ([_]u5{ 0, 8, 16 }) |shift| {
+        const front: u16 = @as(u8, @truncate(foreground >> shift));
+        const back: u16 = @as(u8, @truncate(background >> shift));
+        const channel = (front * opacity + back * (255 - @as(u16, opacity)) + 127) / 255;
+        result |= @as(u24, channel) << shift;
+    }
+    return result;
+}
+
+fn drawStyledLine(x: u64, y: u64, start: usize, text: []const u21, normal_ink: u24, link_ink: u24, width: u64, row_height: u8, background: u24) void {
     if (text.len == 0) return;
     var glyphs = GlyphPositions.init(x, start, text, width);
-    for (text, 0..) |ch, column| {
-        const index = start + column;
+    const visible = trimLine(text);
+    for (0..visible.len) |column| {
+        const index = start + if (page_rtl[start]) visible.len - 1 - column else column;
+        const ch = page[index];
         const px = glyphs.next(index) orelse continue;
         const flags = page_style_flags[index];
         const scale = @max(1, page_font_scales[index]);
-        if (ch == 0xff) {
+        if (ch == image_marker) {
             const image_index: usize = page_media_ids[index];
             if (image_index < inline_images.len) if (inline_images[image_index]) |picture| {
                 const image_width = @min(@as(u64, page_media_widths[index]), x + width -| px);
@@ -790,10 +855,18 @@ fn drawStyledLine(x: u64, y: u64, start: usize, text: []const u8, normal_ink: u3
         const advance = page_advances[index];
         if (px + advance > x + width) continue;
         if ((flags & 2) != 0) canvas.fillRect(px, y, advance, row_height, cssColor(page_backgrounds[index]));
-        const ink = if ((flags & 1) != 0) cssColor(page_colors[index]) else if (page_link_ids[index] != 0) link_ink else normal_ink;
-        const character = [_]u8{ch};
-        if ((flags & 128) != 0) font.drawTextItalicSized(px, y, &character, scale, fontSize(scale), ink) else font.drawTextSized(px, y, &character, scale, fontSize(scale), ink);
-        if ((flags & 4) != 0) font.drawTextSized(px + 1, y, &character, scale, fontSize(scale), ink);
+        const foreground = if ((flags & 1) != 0) page_colors[index] else if (page_link_ids[index] != 0) link_ink else normal_ink;
+        const backdrop = if ((flags & 2) != 0) page_backgrounds[index] else background;
+        const ink = cssColor(mixColor(foreground, backdrop, page_opacities[index]));
+        const size = page_font_pixels[index];
+        if (fallback.find(ch)) |entry| {
+            fallback.draw(entry, px, y, size, ink);
+        } else {
+            const encoded = font.encodeUtf8(ch);
+            const character = encoded.bytes[0..encoded.length];
+            if ((flags & 128) != 0) font.drawTextItalicSized(px, y, character, scale, size, ink) else font.drawTextSized(px, y, character, scale, size, ink);
+            if ((flags & 4) != 0) font.drawTextSized(px + 1, y, character, scale, size, ink);
+        }
         if ((flags & 8) != 0 or page_link_ids[index] != 0) canvas.fillRect(px, y + 7 * scale, advance, 1, ink);
         if ((page_decorations[index] & 1) != 0) canvas.fillRect(px, y + 4 * scale, advance, 1, ink);
         if ((page_decorations[index] & 2) != 0) canvas.fillRect(px, y, advance, 1, ink);
@@ -806,7 +879,7 @@ fn addImage(tag: []const u8, style: css.Computed, picture: media.Picture, column
     newline();
     const marker = page_len;
     if (marker == page.len) return;
-    appendPage(0xff);
+    appendPage(image_marker);
     page_media_ids[marker] = index;
     page_media_widths[marker] = dimensions.w;
     page_advances[marker] = dimensions.w;
@@ -829,8 +902,9 @@ fn wrapWord(input: []const u8) void {
                 continue;
             }
         }
-        i += 1;
-        word_width += glyphAdvance(if (input[i - 1] < 0x80) input[i - 1] else '?', rendering_style);
+        const decoded = font.decodeUtf8(input[i..]);
+        i += decoded.length;
+        if (!arabicMark(decoded.codepoint)) word_width += glyphAdvance(decoded.codepoint, rendering_style);
     }
     if (word_width > width) return;
     if (line_width <= width - word_width) return;
@@ -840,15 +914,18 @@ fn wrapWord(input: []const u8) void {
 
 fn appendText(text: []const u8, previous_space: *bool, preformatted: bool) void {
     var i: usize = 0;
+    var previous: u21 = 0;
     while (i < text.len and page_len < page.len) {
-        const ch = text[i];
-        if (!preformatted and previous_space.* and !std.ascii.isWhitespace(ch) and !flow_style.white_space_nowrap) {
+        const decoded = font.decodeUtf8(text[i..]);
+        const ch = decoded.codepoint;
+        if (!preformatted and previous_space.* and !(ch < 128 and std.ascii.isWhitespace(@intCast(ch))) and !flow_style.white_space_nowrap) {
             wrapWord(text[i..]);
         }
         if (ch == '&') {
             if (htmlEntity(text, i)) |entity| {
                 appendVisible(entity.ch, previous_space);
                 i += entity.consumed;
+                previous = entity.ch;
                 continue;
             }
         }
@@ -859,9 +936,40 @@ fn appendText(text: []const u8, previous_space: *bool, preformatted: bool) void 
             for (0..4) |_| appendPage(' ');
         } else if (preformatted and ch == ' ') {
             appendPage(' ');
-        } else appendVisible(ch, previous_space);
-        i += 1;
+        } else if (!arabicMark(ch)) {
+            appendVisible(shapeArabic(ch, previous, text[i + decoded.length ..]), previous_space);
+        }
+        if (!arabicMark(ch)) previous = ch;
+        i += decoded.length;
     }
+}
+
+fn arabicMark(ch: u21) bool {
+    return (ch >= 0x064b and ch <= 0x065f) or ch == 0x0670;
+}
+
+fn arabicForms(ch: u21) ?[4]u21 {
+    if (ch < 0x0600 or ch > 0x06ff) return null;
+    for (arabic.forms) |form| if (form.base == ch) return form.glyphs;
+    return null;
+}
+
+fn shapeArabic(ch: u21, previous: u21, tail: []const u8) u21 {
+    const forms = arabicForms(ch) orelse return ch;
+    var rest = tail;
+    var following: u21 = 0;
+    while (rest.len != 0) {
+        const decoded = font.decodeUtf8(rest);
+        rest = rest[decoded.length..];
+        if (!arabicMark(decoded.codepoint)) {
+            following = decoded.codepoint;
+            break;
+        }
+    }
+    const joins_previous = if (arabicForms(previous)) |p| p[2] != 0 and forms[1] != 0 else false;
+    const joins_following = if (arabicForms(following)) |n| n[1] != 0 and forms[2] != 0 else false;
+    const index = @as(usize, @intFromBool(joins_previous)) + @as(usize, @intFromBool(joins_following)) * 2;
+    return if (forms[index] == 0) ch else forms[index];
 }
 
 fn collectMetadata(input: []const u8, sheet: *css.Sheet, height: u16, resources: Resources) void {
@@ -896,7 +1004,7 @@ const Rows = struct {
     fn next(self: *Rows) ?Row {
         if (self.pos >= page_len) return null;
         const start = self.pos;
-        const end = std.mem.indexOfScalarPos(u8, page[0..page_len], start, '\n') orelse page_len;
+        const end = std.mem.indexOfScalarPos(u21, page[0..page_len], start, '\n') orelse page_len;
         self.pos = if (end == page_len) end else end + 1;
         var height: u64 = if (start == end) 1 else 10;
         for (page_line_heights[start..@min(self.pos, page_len)]) |line_height| height = @max(height, line_height);
@@ -933,8 +1041,8 @@ fn clampScroll(height: u64) void {
 pub fn draw(x: u64, y: u64, width: u64, height: u64, dark: bool) void {
     // Keep the default text and the resolved CSS palette paired until navigation.
     const page_dark = document_dark orelse dark;
-    const normal_ink = cssColor(if (page_dark) 0xebebeb else 0x202020);
-    const link_ink = cssColor(if (page_dark) 0x7fbcff else 0x194e99);
+    const normal_ink: u24 = if (page_dark) 0xebebeb else 0x202020;
+    const link_ink: u24 = if (page_dark) 0x49ceef else 0x194e99;
     clampScroll(height);
     const background = page_background_color orelse if (page_dark) @as(u24, 0x222222) else 0xffffff;
     canvas.fillRect(x, y, width, height, cssColor(background));
@@ -944,7 +1052,7 @@ pub fn draw(x: u64, y: u64, width: u64, height: u64, dark: bool) void {
     while (rows.next()) |row| {
         if (row.height > height -| top) break;
         const line = page[row.start..row.end];
-        drawStyledLine(x, y + top, row.start, line, normal_ink, link_ink, width, @intCast(row.height));
+        drawStyledLine(x, y + top, row.start, line, normal_ink, link_ink, width, @intCast(row.height), background);
         top += row.height;
     }
 }
@@ -957,14 +1065,15 @@ pub fn linkAt(x: u64, y: u64, width: u64, height: u64) ?[]const u8 {
         if (row.height > height -| top) return null;
         top += row.height;
         if (y >= top) continue;
-        const line = page[row.start..row.end];
+        const line = trimLine(page[row.start..row.end]);
         if (line.len == 0) return null;
         var glyphs = GlyphPositions.init(0, row.start, line, width);
-        for (line, 0..) |ch, column| {
-            const index = row.start + column;
+        for (0..line.len) |column| {
+            const index = row.start + if (page_rtl[row.start]) line.len - 1 - column else column;
+            const ch = page[index];
             const left = glyphs.next(index) orelse continue;
-            const glyph_width = if (ch == 0xff) @min(@as(u64, page_media_widths[index]), width - left) else page_advances[index];
-            if (ch != 0xff and left + glyph_width > width) continue;
+            const glyph_width = if (ch == image_marker) @min(@as(u64, page_media_widths[index]), width - left) else page_advances[index];
+            if (ch != image_marker and left + glyph_width > width) continue;
             const id = page_link_ids[index];
             if (id != 0 and x >= left and x < left + glyph_width) {
                 const link = &links[id - 1];
@@ -976,17 +1085,22 @@ pub fn linkAt(x: u64, y: u64, width: u64, height: u64) ?[]const u8 {
     return null;
 }
 
+fn trimLine(text: []const u21) []const u21 {
+    var end = text.len;
+    while (end > 0 and text[end - 1] == ' ') end -= 1;
+    return text[0..end];
+}
+
 const GlyphPositions = struct {
     next_x: u64,
     right: u64,
 
-    fn init(x: u64, start: usize, text: []const u8, width: u64) GlyphPositions {
+    fn init(x: u64, start: usize, text: []const u21, width: u64) GlyphPositions {
         const flags = page_style_flags[start];
         const left = @min(width, page_align_starts[start]);
         const box_width = @min(width - left, page_align_widths[start]);
         var line_width_px: u64 = 0;
-        const trimmed = std.mem.trimEnd(u8, text, " ");
-        for (page_advances[start..][0..trimmed.len]) |advance| line_width_px += advance;
+        for (page_advances[start..][0..trimLine(text).len]) |advance| line_width_px += advance;
         const spare = box_width -| line_width_px;
         const offset = if ((flags & 16) != 0) spare / 2 else if ((flags & 32) != 0) spare else 0;
         return .{ .next_x = x + left + offset, .right = x + width };
