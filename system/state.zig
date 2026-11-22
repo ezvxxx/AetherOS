@@ -28,6 +28,7 @@ pub const Window = struct {
 pub var windows = [_]Window{ .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{} };
 pub var active_window: i8 = -1;
 pub var start_menu_open = false;
+pub var boot_splash_visible = false;
 /// Light is the default; the Personalization settings page can switch this at runtime.
 pub var dark_theme = false;
 pub var dragging = false;

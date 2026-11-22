@@ -73,7 +73,7 @@ $(BUILD)/h264_%.o: third_party/tinyh264/native/%.c | $(BUILD)
 	$(ZIG) build-obj $< -target x86_64-freestanding-none -O ReleaseFast -fno-builtin \
 		-Ithird_party/tinyh264/port -Ithird_party/tinyh264/native -femit-bin=$@
 
-$(KERNEL): kernel.zig $(ZIG_SOURCES) $(INTERRUPT_OBJECT) $(MP3_OBJECT) $(H264_OBJECTS) $(GENERATED)/local_name.zig $(GENERATED)/named_ref.zig
+$(KERNEL): kernel.zig assets/aetheros-logo.png $(ZIG_SOURCES) $(INTERRUPT_OBJECT) $(MP3_OBJECT) $(H264_OBJECTS) $(GENERATED)/local_name.zig $(GENERATED)/named_ref.zig
 	@test -n '$(STRALE_DIR)' || { echo 'Missing Arix Strale dependency in third_party/arix/zig-pkg' >&2; exit 1; }
 	$(ZIG) build-exe $(INTERRUPT_OBJECT) $(MP3_OBJECT) $(H264_OBJECTS) \
 		-target x86_64-freestanding-none -mcmodel=kernel -mno-red-zone \

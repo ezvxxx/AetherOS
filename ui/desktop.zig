@@ -19,6 +19,7 @@ const aetherlang = @import("../apps/aetherlang.zig");
 const media_player = @import("../apps/media_player.zig");
 const zip_tool = @import("../apps/zip_tool.zig");
 const search = @import("../apps/search.zig");
+const brand = @import("../graphics/brand.zig");
 
 pub var start_search: [40]u8 = @splat(0);
 pub var start_search_len: usize = 0;
@@ -2355,7 +2356,7 @@ pub fn drawDock() void {
     canvas.fillRect(0, dock_y, s.fb.width, 54, if (s.dark_theme) canvas.color(21, 21, 23) else canvas.color(240, 240, 240));
     canvas.fillRect(0, dock_y, s.fb.width, 1, panel_edge);
     canvas.fillRoundedRect(14, dock_y + 8, 88, 36, 10, if (s.dark_theme) canvas.color(43, 43, 45) else canvas.color(224, 224, 224));
-    font.drawTextCentered(14, dock_y + 9, 88, 36, "Start", 1, if (s.start_menu_open) accent else white);
+    brand.drawLogo(44, dock_y + 13, 28);
     const center = s.fb.width / 2;
     const icon_x = [_]u64{ center -| 92, center -| 42, center + 8, center + 58 };
     const icon_app = [_]s.App{ .terminal, .files, .settings, .browser };

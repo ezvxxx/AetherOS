@@ -31,6 +31,7 @@ const game = @import("ui/game.zig");
 const pci = @import("drivers/pci.zig");
 const ata = @import("drivers/ata.zig");
 const media_player = @import("apps/media_player.zig");
+const brand = @import("graphics/brand.zig");
 
 pub const panic = panic_handler.panic;
 var kernel_stack: [1024 * 1024]u8 align(16) = undefined;
@@ -83,16 +84,23 @@ fn kernelMain(info: *const boot_protocol.BootInfo) callconv(.c) noreturn {
     state.physical_memory_bytes = pmm.totalMemoryBytes();
     _ = canvas.initBackbuffer();
     _ = heap.allocate(64, 16);
+    brand.init();
+    state.boot_splash_visible = true;
+    state.mouse_x = state.fb.width;
+    state.mouse_y = state.fb.height;
     if (system_font.init()) {
         panic_handler.trace("font: Inter TTF loaded");
     } else {
         panic_handler.trace("font: Inter TTF failed; bitmap fallback active");
     }
+    brand.drawBootSplash();
     state.mouse_x = state.fb.width / 2;
     state.mouse_y = state.fb.height / 2;
     panic_handler.trace("input: initializing PS/2");
     state.keyboard_ready = ps2.initKeyboard();
     state.mouse_ready = ps2.initMouse();
+    interrupts.init();
+    panic_handler.trace("ui: interrupts enabled");
     state.ethernet_present = e1000.init();
     state.ethernet_link_up = e1000.linkUp();
     pci.init();
@@ -129,11 +137,10 @@ fn kernelMain(info: *const boot_protocol.BootInfo) callconv(.c) noreturn {
     if (state.usb_controller_count != 0) notifications.show(usb.description());
     keyboard.refreshFilesystemListing();
     panic_handler.trace("ui: keyboard filesystem refresh done");
-    interrupts.init();
-    panic_handler.trace("ui: interrupts enabled");
     var first_frame = true;
     var frame_trace_pending = true;
     while (true) {
+        const is_first_frame = first_frame;
         var redraw = first_frame;
         first_frame = false;
         if (notifications.update()) redraw = true;
@@ -172,6 +179,7 @@ fn kernelMain(info: *const boot_protocol.BootInfo) callconv(.c) noreturn {
         }
         if (redraw) {
             if (frame_trace_pending) panic_handler.trace("ui: first frame draw start");
+            if (is_first_frame and state.boot_splash_visible) brand.finishBootSplash();
             desktop.drawDesktop();
             canvas.presentFrame();
             if (frame_trace_pending) {

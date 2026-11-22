@@ -2,6 +2,7 @@
 const io = @import("io.zig");
 const s = @import("../system/state.zig");
 const gdt = @import("gdt.zig");
+const brand = @import("../graphics/brand.zig");
 
 const Gate = packed struct {
     offset_low: u16 = 0,
@@ -115,6 +116,7 @@ pub fn init() void {
 
 pub export fn aether_irq_timer() callconv(.c) void {
     s.advanceUptime();
+    brand.timerTick();
     const irq_count: *volatile u64 = &s.timer_irq_count;
     irq_count.* +%= 1;
     io.out8(0x20, 0x20);
